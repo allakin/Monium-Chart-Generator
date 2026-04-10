@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #F7F8FA;
+      color: #1A1A1A;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    h2 { font-size: 15px; font-weight: 600; }
+    .subtitle { font-size: 11px; color: #808080; }
+
+    .target-bar {
+      background: #EEEEF0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: #808080;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .target-bar.active { background: #E8F0FE; color: #4D7CFE; }
+    .target-bar .icon { flex-shrink: 0; width: 14px; height: 14px; }
+    .target-bar .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .target-bar .size { margin-left: auto; flex-shrink: 0; opacity: 0.7; }
+
+    .field label { display: block; font-size: 11px; color: #808080; margin-bottom: 4px; }
+    .field input {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1.5px solid #E0E0E0;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      color: #1A1A1A;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: #4D7CFE; }
+    .field input::placeholder { color: #AAAAAA; }
+
+    .radio-group {
+      display: flex; gap: 6px;
+    }
+    .radio-option {
+      flex: 1;
+      padding: 7px 0;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      color: #808080;
+      background: #EEEEF0;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .radio-option input { display: none; }
+    .radio-option.active { background: #4D7CFE; color: #fff; }
+    .radio-option:hover:not(.active) { background: #E0E0E0; }
+
+    .buttons { display: flex; gap: 8px; margin-top: 6px; }
+    .btn {
+      flex: 1;
+      padding: 10px 0;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: #4D7CFE; color: #fff; }
+    .btn-primary:hover { background: #3A6AE8; }
+    .btn-secondary { background: #EEEEF0; color: #808080; }
+    .btn-secondary:hover { background: #E0E0E0; }
+
+    .footer { text-align: center; font-size: 10px; color: #AAAAAA; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div>
+    <h2>Chart Line Generator</h2>
+    <p class="subtitle">Monium Design System</p>
+  </div>
+
+  <div class="target-bar" id="targetBar">
+    <svg class="icon" viewBox="0 0 14 14" fill="none">
+      <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+    </svg>
+    <span class="name" id="targetName">Select a Frame or AutoLayout</span>
+    <span class="size" id="targetSize"></span>
+  </div>
+
+  <div class="field">
+    <label>Y axis — values (comma-separated)</label>
+    <input type="text" id="yInput" value="0, 50, 100, 150, 200">
+  </div>
+
+  <div class="field">
+    <label>Y axis — unit</label>
+    <input type="text" id="yUnitInput" placeholder="ms, %, $, etc." value="">
+  </div>
+
+  <div class="field">
+    <label>X axis — labels (comma-separated)</label>
+    <input type="text" id="xInput" value="Jan, Feb, Mar, Apr, May, Jun">
+  </div>
+
+  <div class="field">
+    <label>Lines count (1–20)</label>
+    <input type="number" id="linesInput" value="2" min="1" max="20">
+  </div>
+
+  <div class="field">
+    <label>Line style</label>
+    <div class="radio-group" id="styleGroup">
+      <label class="radio-option active" data-value="smooth">
+        <input type="radio" name="lineStyle" value="smooth" checked> Smooth
+      </label>
+      <label class="radio-option" data-value="sharp">
+        <input type="radio" name="lineStyle" value="sharp"> Sharp
+      </label>
+      <label class="radio-option" data-value="peak">
+        <input type="radio" name="lineStyle" value="peak"> Peak
+      </label>
+    </div>
+  </div>
+
+  <div class="buttons">
+    <button class="btn btn-primary" onclick="generate()">Insert chart</button>
+    <button class="btn btn-secondary" onclick="resetAll()">Reset</button>
+  </div>
+
+  <div class="footer">Monium Design System v1.0</div>
+
+  <script>
+    var DEFAULTS = {
+      y: '0, 50, 100, 150, 200',
+      x: 'Jan, Feb, Mar, Apr, May, Jun',
+      lines: '2',
+      style: 'smooth'
+    };
+
+    // Radio toggle
+    document.querySelectorAll('.radio-option').forEach(function(opt) {
+      opt.addEventListener('click', function() {
+        document.querySelectorAll('.radio-option').forEach(function(o) { o.classList.remove('active'); });
+        opt.classList.add('active');
+        opt.querySelector('input').checked = true;
+      });
+    });
+
+    function getLineStyle() {
+      var checked = document.querySelector('input[name="lineStyle"]:checked');
+      return checked ? checked.value : 'smooth';
+    }
+
+    function setLineStyle(val) {
+      document.querySelectorAll('.radio-option').forEach(function(o) {
+        o.classList.remove('active');
+        if (o.dataset.value === val) {
+          o.classList.add('active');
+          o.querySelector('input').checked = true;
+        }
+      });
+    }
+
+    function generate() {
+      var yRaw = document.getElementById('yInput').value.trim();
+      var xRaw = document.getElementById('xInput').value.trim();
+      var linesRaw = document.getElementById('linesInput').value.trim();
+
+      var yValues = yRaw.split(',').map(function(s) { return parseFloat(s.trim()); }).filter(function(n) { return !isNaN(n); });
+      var xLabels = xRaw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+      var linesCount = Math.max(1, Math.min(20, parseInt(linesRaw) || 2));
+
+      var yUnit = document.getElementById('yUnitInput').value.trim();
+
+      parent.postMessage({ pluginMessage: {
+        type: 'generate',
+        yValues: yValues,
+        yUnit: yUnit,
+        xLabels: xLabels,
+        linesCount: linesCount,
+        lineStyle: getLineStyle()
+      }}, '*');
+    }
+
+    function resetAll() {
+      document.getElementById('yInput').value = DEFAULTS.y;
+      document.getElementById('yUnitInput').value = '';
+      document.getElementById('xInput').value = DEFAULTS.x;
+      document.getElementById('linesInput').value = DEFAULTS.lines;
+      setLineStyle(DEFAULTS.style);
+    }
+
+    window.onmessage = function(event) {
+      var msg = event.data.pluginMessage;
+      if (!msg || msg.type !== 'selection') return;
+      var bar = document.getElementById('targetBar');
+      var name = document.getElementById('targetName');
+      var size = document.getElementById('targetSize');
+      if (msg.hasFrame) {
+        bar.className = 'target-bar active';
+        name.textContent = msg.name;
+        size.textContent = msg.width + ' x ' + msg.height;
+      }
+    };
+  </script>
+</body>
+</html>
