@@ -13,7 +13,7 @@ var PALETTE = [
   { r: 0.933, g: 0.353, b: 0.141 }, // #EE5A24
   { r: 0.992, g: 0.655, b: 0.875 }, // #FDA7DF
   { r: 0.106, g: 0.612, b: 0.988 }, // #1B9CFC
-  { r: 0.973, g: 0.937, b: 0.729 }, // #F8EFBA
+  { r: 0.220, g: 0.557, b: 0.675 }, // #3890AC
   { r: 0.345, g: 0.694, b: 0.624 }, // #58B19F
   { r: 0.702, g: 0.216, b: 0.443 }, // #B33771
   { r: 0.231, g: 0.231, b: 0.596 }, // #3B3B98
@@ -21,7 +21,7 @@ var PALETTE = [
   { r: 0.604, g: 0.925, b: 0.859 }, // #9AECDB
   { r: 0.839, g: 0.635, b: 0.910 }, // #D6A2E8
   { r: 0.510, g: 0.345, b: 0.624 }, // #82589F
-  { r: 0.976, g: 0.792, b: 0.141 }, // #F9CA24
+  { r: 0.431, g: 0.298, b: 0.702 }, // #6E4CB3
 ];
 
 var COLOR_GRID = { r: 0.898, g: 0.898, b: 0.898 };
@@ -31,7 +31,7 @@ var DEFAULT_W = 600;
 var DEFAULT_H = 400;
 var PAD_TOP = 10;
 var PAD_RIGHT = 2;
-var PAD_BOTTOM = 25;
+var PAD_BOTTOM = 21;
 var PAD_GAP = 8; // gap between Y labels and plot area
 
 // ─── Selection tracking ─────────────────────────────────────
@@ -65,7 +65,7 @@ function sendSelection() {
 }
 
 // ─── Show UI ────────────────────────────────────────────────
-figma.showUI(__html__, { width: 300, height: 490 });
+figma.showUI(__html__, { width: 300, height: 580 });
 sendSelection();
 figma.on("selectionchange", sendSelection);
 
@@ -80,6 +80,8 @@ figma.ui.onmessage = async function(msg) {
   var linesCount = msg.linesCount;
   var lineStyle = msg.lineStyle || "smooth";
   var yUnit = msg.yUnit || "";
+  var topEvent = msg.topEvent || false;
+  var bottomEvent = msg.bottomEvent || false;
 
   if (!yValues || yValues.length < 2) yValues = [0, 50, 100, 150, 200];
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
@@ -151,7 +153,15 @@ figma.ui.onmessage = async function(msg) {
   drawGrid(container, plot, yValues, xLabels);
   drawYLabels(container, plot, yValues, yMin, yMax, yUnit);
   drawXLabels(container, plot, xLabels);
-  drawLines(container, plot, allSeries, yMin, yMax, lineStyle);
+  // Shuffle palette for random colors
+  var shuffled = PALETTE.slice();
+  for (var si = shuffled.length - 1; si > 0; si--) {
+    var ri = Math.floor(Math.random() * (si + 1));
+    var tmp = shuffled[si]; shuffled[si] = shuffled[ri]; shuffled[ri] = tmp;
+  }
+  drawLines(container, plot, allSeries, yMin, yMax, lineStyle, shuffled);
+  if (topEvent) drawEventBar(container, plot, "top", xLabels.length);
+  if (bottomEvent) drawEventBar(container, plot, "bottom", xLabels.length);
 
   // Insert
   if (target) {
@@ -247,13 +257,13 @@ function drawXLabels(parent, p, xLabels) {
 }
 
 // ─── Lines ──────────────────────────────────────────────────
-function drawLines(parent, p, allSeries, yMin, yMax, lineStyle) {
+function drawLines(parent, p, allSeries, yMin, yMax, lineStyle, colors) {
   var range = yMax - yMin;
   if (range === 0) range = 100;
 
   for (var li = 0; li < allSeries.length; li++) {
     var vals = allSeries[li];
-    var color = PALETTE[li % PALETTE.length];
+    var color = colors[li % colors.length];
     var count = vals.length;
     var gap = p.w / (count - 1 || 1);
 
@@ -314,5 +324,73 @@ function drawLines(parent, p, allSeries, yMin, yMax, lineStyle) {
     vec.strokeCap = "ROUND";
     vec.strokeJoin = "ROUND";
     parent.appendChild(vec);
+  }
+}
+
+// ─── Event bars ─────────────────────────────────────────────
+var TOP_EVENT_COLORS = [
+  { r: 0.506, g: 0.780, b: 0.518 }, // green
+  { r: 0.302, g: 0.686, b: 0.290 }, // darker green
+  { r: 0.698, g: 0.875, b: 0.541 }, // lime green
+  { r: 0.180, g: 0.545, b: 0.341 }, // deep green
+  { r: 0.565, g: 0.933, b: 0.565 }, // light green
+];
+
+var BOTTOM_EVENT_COLORS = [
+  { r: 1.000, g: 0.200, b: 0.200 }, // red
+  { r: 1.000, g: 0.400, b: 0.400 }, // light red
+  { r: 1.000, g: 0.600, b: 0.600 }, // pink-red
+  { r: 0.690, g: 0.718, b: 0.773 }, // grey-blue
+  { r: 0.800, g: 0.820, b: 0.860 }, // light grey
+  { r: 0.478, g: 0.529, b: 0.612 }, // dark grey-blue
+];
+
+var BAR_HEIGHT = 6;
+
+function drawEventBar(parent, p, position, pointCount) {
+  // position: "top" or "bottom"
+  var y;
+  if (position === "top") {
+    y = p.y - BAR_HEIGHT - 2;
+  } else {
+    y = p.y + p.h + 1;
+  }
+
+  // Generate random segments with gaps across X axis width
+  var totalW = p.w;
+  var segMinW = totalW * 0.02;
+  var segMaxW = totalW * 0.08;
+  var gapMinW = totalW * 0.005;
+  var gapMaxW = totalW * 0.04;
+
+  var x = p.x;
+  var endX = p.x + totalW;
+
+  while (x < endX) {
+    // Random gap
+    var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
+    x += gap;
+    if (x >= endX) break;
+
+    // Random segment width
+    var segW = segMinW + Math.random() * (segMaxW - segMinW);
+    if (x + segW > endX) segW = endX - x;
+    if (segW < 1) break;
+
+    // Random color from event palette
+    var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
+    var color = palette[Math.floor(Math.random() * palette.length)];
+
+    // Random opacity 0.4–1.0
+    var opacity = 0.4 + Math.random() * 0.6;
+
+    var rect = figma.createRectangle();
+    rect.x = x;
+    rect.y = y;
+    rect.resize(segW, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: color, opacity: opacity }];
+    parent.appendChild(rect);
+
+    x += segW;
   }
 }

@@ -10,7 +10,7 @@
       padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 0;
     }
     h2 { font-size: 15px; font-weight: 600; }
     .subtitle { font-size: 11px; color: #808080; }
@@ -19,6 +19,7 @@
       background: #EEEEF0;
       border-radius: 6px;
       padding: 8px 10px;
+      margin-top: 16px;
       font-size: 11px;
       color: #808080;
       display: flex;
@@ -30,6 +31,7 @@
     .target-bar .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .target-bar .size { margin-left: auto; flex-shrink: 0; opacity: 0.7; }
 
+    .field { margin-top: 16px; }
     .field label { display: block; font-size: 11px; color: #808080; margin-bottom: 4px; }
     .field input {
       width: 100%;
@@ -64,7 +66,31 @@
     .radio-option.active { background: #4D7CFE; color: #fff; }
     .radio-option:hover:not(.active) { background: #E0E0E0; }
 
-    .buttons { display: flex; gap: 8px; margin-top: 6px; }
+    .checkbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1;
+      color: #1A1A1A;
+      cursor: pointer;
+    }
+    .checkbox-row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      flex-shrink: 0;
+      accent-color: #4D7CFE;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+
+    .buttons { display: flex; gap: 8px; margin-top: 16px; }
     .btn {
       flex: 1;
       padding: 10px 0;
@@ -134,6 +160,18 @@
     </div>
   </div>
 
+  <div class="field">
+    <label>Events</label>
+    <div class="checkbox-group">
+      <label class="checkbox-row">
+        <input type="checkbox" id="topEventCheck"> Top Event
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="bottomEventCheck"> Bottom Event
+      </label>
+    </div>
+  </div>
+
   <div class="buttons">
     <button class="btn btn-primary" onclick="generate()">Insert chart</button>
     <button class="btn btn-secondary" onclick="resetAll()">Reset</button>
@@ -184,13 +222,18 @@
 
       var yUnit = document.getElementById('yUnitInput').value.trim();
 
+      var topEvent = document.getElementById('topEventCheck').checked;
+      var bottomEvent = document.getElementById('bottomEventCheck').checked;
+
       parent.postMessage({ pluginMessage: {
         type: 'generate',
         yValues: yValues,
         yUnit: yUnit,
         xLabels: xLabels,
         linesCount: linesCount,
-        lineStyle: getLineStyle()
+        lineStyle: getLineStyle(),
+        topEvent: topEvent,
+        bottomEvent: bottomEvent
       }}, '*');
     }
 
@@ -200,6 +243,8 @@
       document.getElementById('xInput').value = DEFAULTS.x;
       document.getElementById('linesInput').value = DEFAULTS.lines;
       setLineStyle(DEFAULTS.style);
+      document.getElementById('topEventCheck').checked = false;
+      document.getElementById('bottomEventCheck').checked = false;
     }
 
     window.onmessage = function(event) {
