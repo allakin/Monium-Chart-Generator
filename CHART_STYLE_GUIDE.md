@@ -6,7 +6,7 @@ This folder contains Figma plugins for generating charts in Monium / Yandex Clou
 ## Project Structure
 ```
 Monium Chart Generator/
-├── CLAUDE.md              ← this file (shared style guide)
+├── CHART_STYLE_GUIDE.md   ← this file (shared style guide)
 ├── Chart Line/            ← Line Chart plugin
 │   ├── manifest.json
 │   ├── code.js
