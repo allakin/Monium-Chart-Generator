@@ -3,6 +3,8 @@
 ## Overview
 This folder contains Figma plugins for generating charts in Monium / Yandex Cloud style. Each chart type lives in its own subfolder (e.g. `Chart Line/`). All plugins share the same visual style defined below.
 
+**This file is a skill for creating new Figma chart plugins.** When asked to create a new chart type plugin, follow this guide: apply all shared style parameters, reuse UI patterns, and place the plugin in its own subfolder with `manifest.json`, `code.js`, and `ui.html`.
+
 ## Project Structure
 ```
 Monium Chart Generator/
@@ -12,7 +14,10 @@ Monium Chart Generator/
 │   ├── code.js
 │   └── ui.html
 ├── Chart Bar/             ← (future) Bar Chart plugin
-├── Chart Area/            ← (future) Area Chart plugin
+├── Chart Area/            ← Area Chart plugin
+│   ├── manifest.json
+│   ├── code.js
+│   └── ui.html
 └── ...
 ```
 
@@ -75,9 +80,23 @@ Use these colors for chart lines, bars, areas, slices, etc. Shuffle randomly on 
 ### Data Lines (Line Chart specific)
 - Rendered as continuous vector paths (no dots/circles on points)
 - Stroke weight: `2px`
-- Stroke cap: `ROUND`
+- Stroke cap: `NONE` (no rounding at line start/end)
 - Stroke join: `ROUND`
 - Three styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
+
+### Data Areas (Area Chart specific)
+- Rendered as closed vector shapes (top curve + bottom baseline/previous series curve)
+- Fill: palette color with configurable opacity (default `0.3`, range `0.05–1.0`)
+- Stroke applied to the closed shape (not a separate open path — avoids artifacts on sharp angles):
+  - Color: `#000000` → `{ r: 0, g: 0, b: 0 }`
+  - Opacity: `0.4` (40%)
+  - Weight: `0.2px`
+  - Align: `OUTSIDE`
+  - Join: `ROUND`
+- Three curve styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
+- Two area modes:
+  - **Overlap** — each area starts from baseline (bottom of plot area), areas overlap with transparency
+  - **Stacked** — each area stacks on top of the previous one; values are scaled by `1/areasCount` so the total fits within Y range. Bottom edge of each stacked area must use the same curve interpolation as the top edge of the area below it (prevents gaps between areas)
 
 ### Container
 - Transparent fill (`fills = []`)
@@ -145,6 +164,11 @@ active: background: #4D7CFE; color: #fff;
 ### Action Buttons
 - Primary: `background: #4D7CFE; color: #fff; border-radius: 8px; font-weight: 600`
 - Secondary: `background: #EEEEF0; color: #808080`
+
+### Additional UI Fields (Area Chart)
+- **Area mode** radio group: `Overlap` (default) / `Stacked`
+- **Fill opacity** number input: `0.05–1.0`, default `0.3`, step `0.05`
+- Plugin window height: `720px` (taller than Line Chart due to extra fields)
 
 ### Section Spacing
 - `16px` between all sections (fields, groups, buttons)
