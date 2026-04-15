@@ -342,7 +342,7 @@ function drawAreas(parent, p, allSeries, yMin, yMax, areaStyle, areaMode, fillOp
     areaVec.fills = [{ type: "SOLID", color: color, opacity: fillOpacity }];
     areaVec.strokes = [{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 0.4 }];
     areaVec.strokeWeight = 0.2;
-    areaVec.strokeAlign = "OUTSIDE";
+    areaVec.strokeAlign = "INSIDE";
     areaVec.strokeJoin = "ROUND";
     parent.appendChild(areaVec);
   }

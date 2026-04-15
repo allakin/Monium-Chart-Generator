@@ -91,7 +91,7 @@ Use these colors for chart lines, bars, areas, slices, etc. Shuffle randomly on 
   - Color: `#000000` → `{ r: 0, g: 0, b: 0 }`
   - Opacity: `0.4` (40%)
   - Weight: `0.2px`
-  - Align: `OUTSIDE`
+  - Align: `INSIDE`
   - Join: `ROUND`
 - Three curve styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
 - Two area modes:
