@@ -13,7 +13,10 @@ Monium Chart Generator/
 │   ├── manifest.json
 │   ├── code.js
 │   └── ui.html
-├── Chart Bar/             ← (future) Bar Chart plugin
+├── Chart Bar/             ← Bar Chart plugin
+│   ├── manifest.json
+│   ├── code.js
+│   └── ui.html
 ├── Chart Area/            ← Area Chart plugin
 │   ├── manifest.json
 │   ├── code.js
@@ -98,6 +101,23 @@ Use these colors for chart lines, bars, areas, slices, etc. Shuffle randomly on 
   - **Overlap** — each area starts from baseline (bottom of plot area), areas overlap with transparency
   - **Stacked** — each area stacks on top of the previous one; values are scaled by `1/areasCount` so the total fits within Y range. Bottom edge of each stacked area must use the same curve interpolation as the top edge of the area below it (prevents gaps between areas)
 
+### Data Bars (Bar Chart specific)
+- Rendered as rectangles (`figma.createRectangle()`)
+- Fill: palette color with configurable opacity (default `1.0`, range `0.05–1.0`)
+- No stroke on bars
+- Two orientations:
+  - **Vertical** — bars grow upward from baseline, categories along X axis, values along Y axis
+  - **Horizontal** — bars grow rightward from left edge, categories along Y axis, values along X axis
+- Three bar modes:
+  - **Normal** — single bar per category (series count forced to 1), single color for all bars
+  - **Grouped** — multiple series side-by-side within each category slot; fixed 70% slot ratio, 1px internal gap between bars
+  - **Stacked** — series stacked on top of each other; values scaled by `1/seriesCount` so total fits within Y range. Bars clamped to plot area boundaries
+- **Dense mode** checkbox (Normal and Stacked only): multiplies data points by 10x for frequent bars
+- **Bar gap (px)** input (Normal and Stacked only): configurable spacing between bar slots (default `1px`, range `0–50px`). Not available for Grouped mode (uses fixed 70% ratio)
+- **Series count** input disabled when Bar mode is Normal (always 1 series)
+- Grid lines: vertical lines at X label center positions (vertical orientation), horizontal lines at category center positions (horizontal orientation)
+- Dynamic left padding: measures widest Y-value label (vertical) or widest category label (horizontal)
+
 ### Container
 - Transparent fill (`fills = []`)
 - `clipsContent = true`
@@ -169,6 +189,15 @@ active: background: #4D7CFE; color: #fff;
 - **Area mode** radio group: `Overlap` (default) / `Stacked`
 - **Fill opacity** number input: `0.05–1.0`, default `0.3`, step `0.05`
 - Plugin window height: `720px` (taller than Line Chart due to extra fields)
+
+### Additional UI Fields (Bar Chart)
+- **Orientation** radio group: `Vertical` (default) / `Horizontal`
+- **Bar mode** radio group: `Normal` (default) / `Grouped` / `Stacked`
+- **Bar gap (px)** number input: `0–50`, default `1`, step `1` — visible only for Normal and Stacked modes
+- **Dense bars** checkbox: visible only for Normal and Stacked modes; generates 10x data points for frequent bars
+- **Fill opacity** number input: `0.05–1.0`, default `1.0`, step `0.05`
+- **Series count** input: disabled when Bar mode is Normal
+- Plugin window height: `830px`
 
 ### Section Spacing
 - `16px` between all sections (fields, groups, buttons)
