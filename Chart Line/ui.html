@@ -31,6 +31,25 @@
     .target-bar .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .target-bar .size { margin-left: auto; flex-shrink: 0; opacity: 0.7; }
 
+    .btn-regen {
+      display: none;
+      width: 100%;
+      padding: 9px 0;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      background: #4D7CFE;
+      color: #fff;
+      margin-top: 10px;
+    }
+    .btn-regen:hover:not(:disabled) { background: #3A6AE8; }
+    .btn-regen:active:not(:disabled) { transform: scale(0.97); }
+    .btn-regen:disabled { opacity: 0.45; cursor: default; }
+
     .field { margin-top: 16px; }
     .field label { display: block; font-size: 11px; color: #808080; margin-bottom: 4px; }
     .field input {
@@ -102,13 +121,21 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-    .btn:active { transform: scale(0.97); }
+    .btn:active:not(:disabled) { transform: scale(0.97); }
     .btn-primary { background: #4D7CFE; color: #fff; }
-    .btn-primary:hover { background: #3A6AE8; }
+    .btn-primary:hover:not(:disabled) { background: #3A6AE8; }
+    .btn:disabled { opacity: 0.45; cursor: default; }
     .btn-secondary { background: #EEEEF0; color: #808080; }
     .btn-secondary:hover { background: #E0E0E0; }
 
     .footer { text-align: center; font-size: 10px; color: #AAAAAA; margin-top: 4px; }
+
+    .error-msg {
+      display: none;
+      font-size: 11px;
+      color: #E53935;
+      margin-top: 6px;
+    }
   </style>
 </head>
 <body>
@@ -124,6 +151,9 @@
     <span class="name" id="targetName">Select a Frame or AutoLayout</span>
     <span class="size" id="targetSize"></span>
   </div>
+
+  <button class="btn-regen" id="regenBtn" onclick="regenerate()">Get values from chart</button>
+  <div class="error-msg" id="regenError"></div>
 
   <div class="field">
     <label>Y axis — values (comma-separated)</label>
@@ -173,7 +203,7 @@
   </div>
 
   <div class="buttons">
-    <button class="btn btn-primary" onclick="generate()">Insert chart</button>
+    <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
     <button class="btn btn-secondary" onclick="resetAll()">Reset</button>
   </div>
 
@@ -186,6 +216,17 @@
       lines: '2',
       style: 'smooth'
     };
+
+    var storedChartData = null;
+    var replaceMode = false;
+
+    function setInsertEnabled(enabled) {
+      document.getElementById('insertBtn').disabled = !enabled;
+    }
+
+    function setRegenEnabled(enabled) {
+      document.getElementById('regenBtn').disabled = !enabled;
+    }
 
     // Radio toggle
     document.querySelectorAll('.radio-option').forEach(function(opt) {
@@ -211,6 +252,48 @@
       });
     }
 
+    function showRegenError(text) {
+      var el = document.getElementById('regenError');
+      el.textContent = text;
+      el.style.display = 'block';
+    }
+
+    function hideRegenError() {
+      document.getElementById('regenError').style.display = 'none';
+    }
+
+    function regenerate() {
+      hideRegenError();
+
+      if (!storedChartData) {
+        showRegenError('Failed to get data: no chart found in selected frame');
+        return;
+      }
+
+      var d = storedChartData;
+
+      if (!d.yValues || d.yValues.length < 2) {
+        showRegenError('Failed to get data: could not read Y axis values from chart');
+        return;
+      }
+      if (!d.xLabels || d.xLabels.length < 1) {
+        showRegenError('Failed to get data: could not read X axis labels from chart');
+        return;
+      }
+
+      document.getElementById('yInput').value = d.yValues.join(', ');
+      document.getElementById('yUnitInput').value = d.yUnit || '';
+      document.getElementById('xInput').value = d.xLabels.join(', ');
+      document.getElementById('linesInput').value = String(d.linesCount || 2);
+      setLineStyle(d.lineStyle || 'smooth');
+      document.getElementById('topEventCheck').checked = !!d.topEvent;
+      document.getElementById('bottomEventCheck').checked = !!d.bottomEvent;
+
+      replaceMode = true;
+      setInsertEnabled(true);
+      setRegenEnabled(false);
+    }
+
     function generate() {
       var yRaw = document.getElementById('yInput').value.trim();
       var xRaw = document.getElementById('xInput').value.trim();
@@ -233,8 +316,15 @@
         linesCount: linesCount,
         lineStyle: getLineStyle(),
         topEvent: topEvent,
-        bottomEvent: bottomEvent
+        bottomEvent: bottomEvent,
+        replace: replaceMode
       }}, '*');
+
+      replaceMode = false;
+      setInsertEnabled(false);
+      if (storedChartData) {
+        setRegenEnabled(true);
+      }
     }
 
     function resetAll() {
@@ -245,18 +335,36 @@
       setLineStyle(DEFAULTS.style);
       document.getElementById('topEventCheck').checked = false;
       document.getElementById('bottomEventCheck').checked = false;
+      replaceMode = false;
     }
 
     window.onmessage = function(event) {
       var msg = event.data.pluginMessage;
       if (!msg || msg.type !== 'selection') return;
+
       var bar = document.getElementById('targetBar');
       var name = document.getElementById('targetName');
       var size = document.getElementById('targetSize');
+      var regenBtn = document.getElementById('regenBtn');
+
       if (msg.hasFrame) {
         bar.className = 'target-bar active';
         name.textContent = msg.name;
         size.textContent = msg.width + ' x ' + msg.height;
+      }
+
+      hideRegenError();
+
+      if (msg.hasChart && msg.chartData) {
+        storedChartData = msg.chartData;
+        regenBtn.style.display = 'block';
+        setRegenEnabled(true);
+        setInsertEnabled(false);
+      } else {
+        storedChartData = null;
+        regenBtn.style.display = 'none';
+        replaceMode = false;
+        setInsertEnabled(true);
       }
     };
   </script>

@@ -208,6 +208,160 @@ active: background: #4D7CFE; color: #fff;
 
 ---
 
+## Re-generation (shared pattern for all chart types)
+
+All chart plugins must support re-generation — reading parameters from a previously generated chart and replacing it with a new one.
+
+### User Flow
+1. User selects a frame containing a previously generated chart
+2. Plugin detects the chart → shows **"Get values from chart"** button, **"Insert chart"** is disabled
+3. User clicks "Get values from chart" → form fields populate with saved parameters, **"Insert chart"** unlocks, **"Get values from chart"** locks
+4. User modifies parameters if needed
+5. User clicks "Insert chart" → old chart is removed, new chart is generated in its place, **"Insert chart"** locks, **"Get values from chart"** unlocks
+6. If the selected frame has no chart → **"Get values from chart"** is hidden, **"Insert chart"** is enabled (normal generation mode)
+
+### Button State Logic
+| State | "Insert chart" | "Get values from chart" |
+|---|---|---|
+| Frame without chart selected | enabled | hidden |
+| Frame with chart selected | **disabled** | visible, enabled |
+| After "Get values from chart" clicked | enabled | visible, **disabled** |
+| After "Insert chart" clicked (chart exists) | **disabled** | visible, enabled |
+| After "Insert chart" clicked (no chart) | **disabled** | hidden |
+
+### Storing Parameters — `setPluginData`
+After every chart generation, store all parameters as JSON on the chart container frame:
+```js
+container.setPluginData("chartParams", JSON.stringify({
+  yValues: yValues,
+  yUnit: yUnit,
+  xLabels: xLabels,
+  linesCount: linesCount,   // or areasCount, seriesCount, etc.
+  lineStyle: lineStyle,     // chart-type-specific style option
+  topEvent: topEvent,
+  bottomEvent: bottomEvent
+  // ... any chart-type-specific fields (fillOpacity, barMode, orientation, etc.)
+}));
+```
+
+### Reading Parameters — `readChartParams`
+1. **Primary**: `chartFrame.getPluginData("chartParams")` → `JSON.parse()`
+2. **Fallback** (for old charts without plugin data): parse from layer structure using named groups
+
+### Chart Detection — `findChartFrame(frame)`
+Checks if the selected frame IS the chart container or CONTAINS one as a direct child:
+```js
+function findChartFrame(frame) {
+  // Check if the frame itself is the chart (match by container name, e.g. "Chart Line", "Chart Bar")
+  if (frame.name === "Chart Line") return frame;
+  // Check direct children
+  if ("children" in frame) {
+    for (var i = 0; i < frame.children.length; i++) {
+      var child = frame.children[i];
+      if (child.name === "Chart Line" && child.type === "FRAME") return child;
+    }
+  }
+  return null;
+}
+```
+Each plugin adapts the name check to its own container name (`"Chart Bar"`, `"Chart Area"`, etc.).
+
+### Selection Notification
+`sendSelection()` must include chart detection data so the UI can show/hide the button:
+```js
+var chartFrame = findChartFrame(f);
+var chartData = chartFrame ? readChartParams(chartFrame) : null;
+figma.ui.postMessage({
+  type: "selection",
+  hasFrame: true,
+  name: f.name,
+  width: Math.round(f.width),
+  height: Math.round(f.height),
+  hasChart: !!chartData,
+  chartData: chartData
+});
+```
+
+### Replacement Logic in Generate Handler
+When `msg.replace === true`:
+```js
+if (existingChart.id === target.id) {
+  // Selected frame IS the chart — clear children, reuse frame as container
+} else {
+  // Chart is a child — remember position, remove old, create new at same position
+}
+```
+
+### Fallback Layer Parser (for charts without `pluginData`)
+Read from named groups inside the chart container:
+- **"Y Labels"** group → parse text node `.characters` as numbers + extract unit suffix
+- **"X Labels"** group → read text node `.characters`, sort by x-position
+- **"Lines"** / **"Areas"** / **"Bars"** group → count children for series count
+- **"Top Events"** / **"Bottom Events"** group → presence = checkbox enabled
+- **Line style detection**: path data contains `"C"` → smooth; many `"L"` segments → peak; otherwise → sharp
+
+### Layer Structure (required for all chart types)
+All chart elements must be organized into named groups inside the container:
+```
+Chart [Type] (Frame)  [pluginData: chartParams JSON]
+├── Grid (Group)
+├── Y Labels (Group)
+├── X Labels (Group)
+├── [Data Group] (Group)     ← "Lines", "Areas", "Bars", etc.
+├── Top Events (Group)       ← optional
+└── Bottom Events (Group)    ← optional
+```
+Use `figma.group(nodes, container)` after creating all nodes in a category.
+
+### UI Elements
+**"Get values from chart" button** — placed between target bar and first field:
+```html
+<button class="btn-regen" id="regenBtn" onclick="regenerate()">Get values from chart</button>
+<div class="error-msg" id="regenError"></div>
+```
+```css
+.btn-regen {
+  display: none;
+  width: 100%;
+  padding: 9px 0;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: #4D7CFE;
+  color: #fff;
+  margin-top: 10px;
+}
+.btn-regen:hover:not(:disabled) { background: #3A6AE8; }
+.btn-regen:active:not(:disabled) { transform: scale(0.97); }
+.btn-regen:disabled { opacity: 0.45; cursor: default; }
+
+.error-msg {
+  display: none;
+  font-size: 11px;
+  color: #E53935;
+  margin-top: 6px;
+}
+```
+
+### Error Handling
+Show inline error below "Get values from chart" when data cannot be read:
+```js
+if (!storedChartData) {
+  showRegenError('Failed to get data: no chart found in selected frame');
+  return;
+}
+if (!d.yValues || d.yValues.length < 2) {
+  showRegenError('Failed to get data: could not read Y axis values from chart');
+  return;
+}
+```
+
+---
+
 ## Figma Plugin Code Patterns
 
 ### Selection Tracking
