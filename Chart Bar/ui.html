@@ -354,7 +354,7 @@
       setRadio('orientationGroup', d.orientation || 'vertical');
       setRadio('modeGroup', d.barMode || 'normal');
       document.getElementById('barGapInput').value = String(d.barGap !== undefined ? d.barGap : 1);
-      document.getElementById('opacityInput').value = String(d.fillOpacity !== undefined ? d.fillOpacity : 1);
+      document.getElementById('opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
       document.getElementById('denseCheck').checked = !!d.dense;
       document.getElementById('topEventCheck').checked = !!d.topEvent;
       document.getElementById('bottomEventCheck').checked = !!d.bottomEvent;

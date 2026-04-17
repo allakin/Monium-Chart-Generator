@@ -317,7 +317,7 @@
       document.getElementById('areasInput').value = String(d.areasCount || 3);
       setRadio('styleGroup', d.areaStyle || 'smooth');
       setRadio('modeGroup', d.areaMode || 'overlap');
-      document.getElementById('opacityInput').value = String(d.fillOpacity !== undefined ? d.fillOpacity : 0.3);
+      document.getElementById('opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 0.3);
       document.getElementById('topEventCheck').checked = !!d.topEvent;
       document.getElementById('bottomEventCheck').checked = !!d.bottomEvent;
 
