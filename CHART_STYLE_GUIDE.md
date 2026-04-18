@@ -238,13 +238,13 @@ active: background: #4D7CFE; color: #fff;
 ```
 
 ### Action Buttons
-- Primary: `background: #4D7CFE; color: #fff; border-radius: 8px; font-weight: 600`
-- Secondary: `background: #EEEEF0; color: #808080`
+- Primary ("Insert chart"): `background: #4D7CFE; color: #fff; border-radius: 8px; font-weight: 600; width: 100%`
+- No "Reset" button — removed from all plugins
+- Disabled state: `opacity: 0.45; cursor: default`
 
 ### Additional UI Fields (Area Chart)
 - **Area mode** radio group: `Overlap` (default) / `Stacked`
 - **Fill opacity** number input: `0.05–1.0`, default `0.3`, step `0.05`
-- Plugin window height: `720px` (taller than Line Chart due to extra fields)
 
 ### Additional UI Fields (Bar Chart)
 - **Orientation** radio group: `Vertical` (default) / `Horizontal`
@@ -253,7 +253,6 @@ active: background: #4D7CFE; color: #fff;
 - **Dense bars** checkbox: visible only for Normal and Stacked modes; generates 10x data points for frequent bars
 - **Fill opacity** number input: `0.05–1.0`, default `1.0`, step `0.05`
 - **Series count** input: disabled when Bar mode is Normal
-- Plugin window height: `830px`
 
 ### Section Spacing
 - `16px` between all sections (fields, groups, buttons)
@@ -261,6 +260,35 @@ active: background: #4D7CFE; color: #fff;
 ### Footer
 - `"Monium Design System v1.0"`
 - `font-size: 10px; color: #AAAAAA; text-align: center`
+
+### Dynamic Plugin Window Height
+Plugin height adapts to content automatically. No fixed height values.
+- Initial height in `figma.showUI`: `100` (minimal, expands immediately)
+- UI sends `{ type: 'resize', height: document.body.scrollHeight }` to plugin
+- Plugin handles: `figma.ui.resize(300, Math.min(msg.height, maxHeight))`
+- `MutationObserver` on `document.body` triggers resize on any DOM change (e.g. "Get values from chart" button appearing/disappearing)
+```js
+// ui.html — at the end of <script>
+function resizeUI() {
+  var h = document.body.scrollHeight;
+  parent.postMessage({ pluginMessage: { type: 'resize', height: h } }, '*');
+}
+resizeUI();
+new MutationObserver(resizeUI).observe(document.body, { childList: true, subtree: true, attributes: true });
+```
+```js
+// code.js — in figma.ui.onmessage handler, before "generate" check
+if (msg.type === "resize") {
+  figma.ui.resize(300, Math.min(msg.height, 800));
+  return;
+}
+```
+
+### Float Precision for Opacity
+When reading `fillOpacity` from Figma layers (fallback parser), values may have float32 artifacts (e.g. `0.8999999761581421`). Always round to 2 decimal places when populating the UI:
+```js
+Math.round(d.fillOpacity * 100) / 100
+```
 
 ---
 
@@ -347,6 +375,14 @@ if (existingChart.id === target.id) {
   // Chart is a child — remember position, remove old, create new at same position
 }
 ```
+
+### Refresh UI After Generation — `sendSelection()`
+After inserting a chart, always call `sendSelection()` at the end of the generate handler. This ensures the UI immediately updates (shows "Get values from chart" button) without requiring the user to deselect and reselect the frame:
+```js
+// At the very end of the generate handler, after all insert/notify logic:
+sendSelection();
+```
+This is critical because `figma.on("selectionchange")` does NOT fire when the selected frame's content changes — only when the selection itself changes.
 
 ### Fallback Layer Parser (for charts without `pluginData`)
 Read from named groups inside the chart container:

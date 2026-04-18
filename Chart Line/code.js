@@ -1,6 +1,6 @@
 "use strict";
 
-// ─── Palette (20 colors) ────────────────────────────────────
+// ─── Palette ────────────────────────────────────
 var PALETTE = [
   { r: 0.133, g: 0.184, b: 0.243 }, // #222F3E
   { r: 0.043, g: 0.741, b: 0.890 }, // #0ABDE3
@@ -314,12 +314,16 @@ function sendSelection() {
 }
 
 // ─── Show UI ────────────────────────────────────────────────
-figma.showUI(__html__, { width: 300, height: 620 });
+figma.showUI(__html__, { width: 300, height: 100 });
 sendSelection();
 figma.on("selectionchange", sendSelection);
 
 // ─── Message handler ────────────────────────────────────────
 figma.ui.onmessage = async function (msg) {
+  if (msg.type === "resize") {
+    figma.ui.resize(300, Math.min(msg.height, 800));
+    return;
+  }
   if (msg.type !== "generate") return;
 
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
@@ -510,6 +514,8 @@ figma.ui.onmessage = async function (msg) {
     figma.viewport.scrollAndZoomIntoView([container]);
     figma.notify("Line chart created!");
   }
+
+  sendSelection();
 };
 
 // ─── Grid ───────────────────────────────────────────────────

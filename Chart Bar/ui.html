@@ -109,9 +109,9 @@
       vertical-align: middle;
     }
 
-    .buttons { display: flex; gap: 8px; margin-top: 16px; }
     .btn {
-      flex: 1;
+      width: 100%;
+      margin-top: 16px;
       padding: 10px 0;
       border: none;
       border-radius: 8px;
@@ -125,8 +125,6 @@
     .btn-primary { background: #4D7CFE; color: #fff; }
     .btn-primary:hover:not(:disabled) { background: #3A6AE8; }
     .btn:disabled { opacity: 0.45; cursor: default; }
-    .btn-secondary { background: #EEEEF0; color: #808080; }
-    .btn-secondary:hover { background: #E0E0E0; }
 
     .footer { text-align: center; font-size: 10px; color: #AAAAAA; margin-top: 4px; }
 
@@ -232,10 +230,7 @@
     </div>
   </div>
 
-  <div class="buttons">
-    <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
-    <button class="btn btn-secondary" onclick="resetAll()">Reset</button>
-  </div>
+  <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
 
   <div class="footer">Monium Design System v1.0</div>
 
@@ -404,21 +399,6 @@
       }
     }
 
-    function resetAll() {
-      document.getElementById('yInput').value = DEFAULTS.y;
-      document.getElementById('yUnitInput').value = '';
-      document.getElementById('xInput').value = DEFAULTS.x;
-      document.getElementById('barsInput').value = DEFAULTS.bars;
-      setRadio('orientationGroup', DEFAULTS.orientation);
-      setRadio('modeGroup', DEFAULTS.mode);
-      document.getElementById('barGapInput').value = DEFAULTS.barGap;
-      document.getElementById('opacityInput').value = DEFAULTS.opacity;
-      document.getElementById('denseCheck').checked = false;
-      document.getElementById('topEventCheck').checked = false;
-      document.getElementById('bottomEventCheck').checked = false;
-      updateDenseVisibility();
-      replaceMode = false;
-    }
 
     window.onmessage = function(event) {
       var msg = event.data.pluginMessage;
@@ -448,7 +428,17 @@
         replaceMode = false;
         setInsertEnabled(true);
       }
+
+      resizeUI();
     };
+
+    function resizeUI() {
+      var h = document.body.scrollHeight;
+      parent.postMessage({ pluginMessage: { type: 'resize', height: h } }, '*');
+    }
+
+    resizeUI();
+    new MutationObserver(resizeUI).observe(document.body, { childList: true, subtree: true, attributes: true });
   </script>
 </body>
 </html>
