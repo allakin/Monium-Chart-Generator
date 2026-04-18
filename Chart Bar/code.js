@@ -72,7 +72,6 @@ var PALETTE = [
   { r: 0.761, g: 0.212, b: 0.086 }, // #C23616
   { r: 0.549, g: 0.478, b: 0.902 }, // #8C7AE6
   { r: 0.612, g: 0.533, b: 1.000 }, // #9C88FF
-  { r: 0.961, g: 0.965, b: 0.980 }, // #F5F6FA
   { r: 0.443, g: 0.502, b: 0.576 }, // #718093
   { r: 0.208, g: 0.231, b: 0.282 }, // #353B48
   { r: 0.482, g: 0.122, b: 0.635 }, // #7B1FA2
@@ -644,11 +643,11 @@ function drawBars(parent, p, allSeries, yMin, yMax, barMode, orientation, colors
           var val = allSeries[si][ci];
           var ratio = (val - yMin) / range;
           var barH = ratio * p.h;
-          if (barH < 1) barH = 1;
+          if (barH < 0.5) barH = 0.5;
           var barY = p.y + p.h - cumulativeH - barH;
           if (barY < p.y) { barH = barH - (p.y - barY); barY = p.y; }
-          if (barH < 1) barH = 1;
-          cumulativeH += ratio * p.h;
+          if (barH < 0.5) barH = 0.5;
+          cumulativeH += barH;
 
           var rect = figma.createRectangle();
           rect.x = barX; rect.y = barY;
@@ -703,11 +702,11 @@ function drawBars(parent, p, allSeries, yMin, yMax, barMode, orientation, colors
           var val = allSeries[si][ci];
           var ratio = (val - yMin) / range;
           var barW = ratio * p.w;
-          if (barW < 1) barW = 1;
+          if (barW < 0.5) barW = 0.5;
           var barX = p.x + cumulativeW;
           if (barX + barW > p.x + p.w) barW = p.x + p.w - barX;
-          if (barW < 1) barW = 1;
-          cumulativeW += ratio * p.w;
+          if (barW < 0.5) barW = 0.5;
+          cumulativeW += barW;
 
           var rect = figma.createRectangle();
           rect.x = barX; rect.y = barY;

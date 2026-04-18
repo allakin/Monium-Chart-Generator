@@ -34,7 +34,7 @@ Monium Chart Generator/
 
 ## Shared Style Parameters
 
-### Color Palette (76 colors for data series)
+### Color Palette (75 colors for data series)
 Use ALL colors from this list in the PALETTE array in every chart plugin. Shuffle randomly on each insert.
 ```
 #222F3E  → { r: 0.133, g: 0.184, b: 0.243 }
@@ -107,7 +107,6 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Shuffl
 #C23616  → { r: 0.761, g: 0.212, b: 0.086 }
 #8C7AE6  → { r: 0.549, g: 0.478, b: 0.902 }
 #9C88FF  → { r: 0.612, g: 0.533, b: 1.000 }
-#F5F6FA  → { r: 0.961, g: 0.965, b: 0.980 }
 #718093  → { r: 0.443, g: 0.502, b: 0.576 }
 #353B48  → { r: 0.208, g: 0.231, b: 0.282 }
 #7B1FA2  → { r: 0.482, g: 0.122, b: 0.635 }
@@ -167,7 +166,7 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Shuffl
 - Three bar modes:
   - **Normal** — single bar per category (series count forced to 1), single color for all bars
   - **Grouped** — multiple series side-by-side within each category slot; fixed 70% slot ratio, 1px internal gap between bars
-  - **Stacked** — series stacked on top of each other; values scaled by `1/seriesCount` so total fits within Y range. Bars clamped to plot area boundaries
+  - **Stacked** — series stacked on top of each other; values scaled by `1/seriesCount` so total fits within Y range. Bars clamped to plot area boundaries. Cumulative offset must use the actual drawn bar size (after clamp), not the raw `ratio * plotSize`, to prevent overlap between stacked segments. Minimum bar size: `0.5px` (not `1px`) to avoid inflating stacked totals
 - **Dense mode** checkbox (Normal and Stacked only): multiplies data points by 10x for frequent bars
 - **Bar gap (px)** input (Normal and Stacked only): configurable spacing between bar slots (default `1px`, range `0–50px`). Not available for Grouped mode (uses fixed 70% ratio)
 - **Series count** input disabled when Bar mode is Normal (always 1 series)
