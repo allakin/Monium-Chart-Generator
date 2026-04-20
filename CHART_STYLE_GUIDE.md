@@ -320,11 +320,20 @@ container.setPluginData("chartParams", JSON.stringify({
   yValues: yValues,
   yUnit: yUnit,
   xLabels: xLabels,
-  linesCount: linesCount,   // or areasCount, seriesCount, etc.
+  linesCount: linesCount,   // or areasCount, barsCount
   lineStyle: lineStyle,     // chart-type-specific style option
   topEvent: topEvent,
-  bottomEvent: bottomEvent
-  // ... any chart-type-specific fields (fillOpacity, barMode, orientation, etc.)
+  bottomEvent: bottomEvent,
+  // Area-specific:
+  areaStyle: areaStyle,     // "smooth" | "sharp" | "peak"
+  areaMode: areaMode,       // "overlap" | "stacked"
+  stackScale: stackScale,   // 0.1–3, default 1.8 (stacked only)
+  fillOpacity: fillOpacity, // 0.05–1.0
+  // Bar-specific:
+  orientation: orientation,  // "vertical" | "horizontal"
+  barMode: barMode,          // "normal" | "grouped" | "stacked"
+  dense: dense,              // boolean
+  barGap: barGap             // 0–50
 }));
 ```
 
@@ -526,7 +535,50 @@ for (var pi = 0; pi < pointCount; pi++) {
 }
 
 // Select maximally distinct colors for the series count
-// Greedy maximin: random first, then each next maximizes min distance to selected
+// Greedy maximin: random first, then each next maximizes min RGB distance to all selected
 var distinctColors = selectDistinctColors(seriesCount);
-// See selectDistinctColors() implementation in any plugin's code.js
+```
+
+### Distinct Color Selection Algorithm — `selectDistinctColors(count)`
+Ensures maximum visual contrast between series colors. Must be used instead of random shuffle.
+```js
+function selectDistinctColors(count) {
+  if (count >= PALETTE.length) {
+    // Fallback: shuffle entire palette
+    var all = PALETTE.slice();
+    for (var si = all.length - 1; si > 0; si--) {
+      var ri = Math.floor(Math.random() * (si + 1));
+      var tmp = all[si]; all[si] = all[ri]; all[ri] = tmp;
+    }
+    return all;
+  }
+  var used = [];
+  var available = [];
+  for (var i = 0; i < PALETTE.length; i++) available.push(i);
+  // Random first color (ensures variety between generations)
+  var firstIdx = Math.floor(Math.random() * available.length);
+  used.push(available[firstIdx]);
+  available.splice(firstIdx, 1);
+  // Each next: pick color with max min-distance to all already selected
+  for (var pick = 1; pick < count; pick++) {
+    var bestIdx = 0;
+    var bestDist = -1;
+    for (var j = 0; j < available.length; j++) {
+      var c = PALETTE[available[j]];
+      var minDist = Infinity;
+      for (var k = 0; k < used.length; k++) {
+        var u = PALETTE[used[k]];
+        var dr = c.r - u.r; var dg = c.g - u.g; var db = c.b - u.b;
+        var d = dr * dr + dg * dg + db * db;
+        if (d < minDist) minDist = d;
+      }
+      if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+    }
+    used.push(available[bestIdx]);
+    available.splice(bestIdx, 1);
+  }
+  var result = [];
+  for (var i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
+  return result;
+}
 ```
