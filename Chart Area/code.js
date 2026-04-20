@@ -569,7 +569,7 @@ function drawAreas(parent, p, allSeries, yMin, yMax, areaStyle, areaMode, fillOp
     var areaVec = figma.createVector();
     areaVec.vectorPaths = [{ windingRule: "NONZERO", data: topPath + bottomPath + " Z" }];
     areaVec.fills = [{ type: "SOLID", color: color, opacity: fillOpacity }];
-    areaVec.strokes = [{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 0.4 }];
+    areaVec.strokes = [{ type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity: 0.2 }];
     areaVec.strokeWeight = 0.2;
     areaVec.strokeAlign = "INSIDE";
     areaVec.strokeJoin = "ROUND";

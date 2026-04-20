@@ -147,7 +147,7 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Shuffl
 - Fill: palette color with configurable opacity (default `0.3`, range `0.05–1.0`)
 - Stroke applied to the closed shape (not a separate open path — avoids artifacts on sharp angles):
   - Color: `#000000` → `{ r: 0, g: 0, b: 0 }`
-  - Opacity: `0.4` (40%)
+  - Opacity: `0.2` (20%)
   - Weight: `0.2px`
   - Align: `INSIDE`
   - Join: `ROUND`
