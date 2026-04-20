@@ -154,7 +154,7 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Shuffl
 - Three curve styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
 - Two area modes:
   - **Overlap** — each area starts from baseline (bottom of plot area), areas overlap with transparency
-  - **Stacked** — each area stacks on top of the previous one; values are scaled by `1/areasCount` so the total fits within Y range. Bottom edge of each stacked area must use the same curve interpolation as the top edge of the area below it (prevents gaps between areas)
+  - **Stacked** — each area stacks on top of the previous one; values are scaled by `3/areasCount` for dramatic peaks that fill more of the Y axis. Stacked values are clamped to `yMax` so areas never exceed the plot boundary. Bottom edge of each stacked area must use the same curve interpolation as the top edge of the area below it (prevents gaps between areas)
 
 ### Data Bars (Bar Chart specific)
 - Rendered as rectangles (`figma.createRectangle()`)

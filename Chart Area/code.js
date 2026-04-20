@@ -375,7 +375,7 @@ figma.ui.onmessage = async function (msg) {
   }
 
   if (areaMode === "stacked" && allSeries.length > 1) {
-    var scaleFactor = 1 / areasCount;
+    var scaleFactor = 3 / areasCount;
     for (var si = 0; si < allSeries.length; si++) {
       for (var pi = 0; pi < allSeries[si].length; pi++) {
         allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
@@ -548,6 +548,7 @@ function drawAreas(parent, p, allSeries, yMin, yMax, areaStyle, areaMode, fillOp
       var x = p.x + gap * pi;
       if (areaMode === "stacked") {
         var stackedVal = cumulativeVals[pi] + (vals[pi] - yMin);
+        if (stackedVal > yMax) stackedVal = yMax;
         topPoints.push({ x: x, y: p.y + p.h - ((stackedVal - yMin) / range) * p.h });
         bottomPoints.push({ x: x, y: p.y + p.h - ((cumulativeVals[pi] - yMin) / range) * p.h });
         cumulativeVals[pi] = stackedVal;
