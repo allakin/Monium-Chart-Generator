@@ -79,6 +79,44 @@ var PALETTE = [
   { r: 0.847, g: 0.106, b: 0.376 }, // #D81B60
 ];
 
+// ─── Distinct color selection ───────────────────────────────
+function selectDistinctColors(count) {
+  if (count >= PALETTE.length) {
+    var all = PALETTE.slice();
+    for (var si = all.length - 1; si > 0; si--) {
+      var ri = Math.floor(Math.random() * (si + 1));
+      var tmp = all[si]; all[si] = all[ri]; all[ri] = tmp;
+    }
+    return all;
+  }
+  var used = [];
+  var available = [];
+  for (var i = 0; i < PALETTE.length; i++) available.push(i);
+  var firstIdx = Math.floor(Math.random() * available.length);
+  used.push(available[firstIdx]);
+  available.splice(firstIdx, 1);
+  for (var pick = 1; pick < count; pick++) {
+    var bestIdx = 0;
+    var bestDist = -1;
+    for (var j = 0; j < available.length; j++) {
+      var c = PALETTE[available[j]];
+      var minDist = Infinity;
+      for (var k = 0; k < used.length; k++) {
+        var u = PALETTE[used[k]];
+        var dr = c.r - u.r; var dg = c.g - u.g; var db = c.b - u.b;
+        var d = dr * dr + dg * dg + db * db;
+        if (d < minDist) minDist = d;
+      }
+      if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+    }
+    used.push(available[bestIdx]);
+    available.splice(bestIdx, 1);
+  }
+  var result = [];
+  for (var i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
+  return result;
+}
+
 var COLOR_GRID = { r: 0.898, g: 0.898, b: 0.898 };
 var COLOR_AXIS = { r: 0, g: 0, b: 0 };
 var AXIS_OPACITY = 0.5;
@@ -259,7 +297,7 @@ function readChartParamsFromLayers(chartFrame) {
   return {
     yValues: yValues, yUnit: yUnit, xLabels: xLabels,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
-    fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
+    stackScale: 1.8, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
   };
 }
 
@@ -297,6 +335,7 @@ figma.ui.onmessage = async function (msg) {
   var areasCount = msg.areasCount;
   var areaStyle = msg.areaStyle || "smooth";
   var areaMode = msg.areaMode || "overlap";
+  var stackScale = msg.stackScale;
   var fillOpacity = msg.fillOpacity;
   var yUnit = msg.yUnit || "";
   var topEvent = msg.topEvent || false;
@@ -307,13 +346,15 @@ figma.ui.onmessage = async function (msg) {
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!areasCount || areasCount < 1) areasCount = 2;
   if (areasCount > 20) areasCount = 20;
+  if (stackScale === undefined || stackScale === null) stackScale = 1.8;
+  stackScale = Math.max(0.1, Math.min(3, stackScale));
   if (fillOpacity === undefined || fillOpacity === null) fillOpacity = 0.3;
   fillOpacity = Math.max(0.05, Math.min(1, fillOpacity));
 
   var chartParams = {
     yValues: yValues, yUnit: yUnit, xLabels: xLabels,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
-    fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
+    stackScale: stackScale, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
   };
 
   var yMin = Math.min.apply(null, yValues);
@@ -375,7 +416,7 @@ figma.ui.onmessage = async function (msg) {
   }
 
   if (areaMode === "stacked" && allSeries.length > 1) {
-    var scaleFactor = 3 / areasCount;
+    var scaleFactor = stackScale / areasCount;
     for (var si = 0; si < allSeries.length; si++) {
       for (var pi = 0; pi < allSeries[si].length; pi++) {
         allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
@@ -400,13 +441,9 @@ figma.ui.onmessage = async function (msg) {
   var yLabelNodes = drawYLabels(container, plot, yValues, yMin, yMax, yUnit);
   var xLabelNodes = drawXLabels(container, plot, xLabels);
 
-  var shuffled = PALETTE.slice();
-  for (var si = shuffled.length - 1; si > 0; si--) {
-    var ri = Math.floor(Math.random() * (si + 1));
-    var tmp = shuffled[si]; shuffled[si] = shuffled[ri]; shuffled[ri] = tmp;
-  }
+  var distinctColors = selectDistinctColors(areasCount);
 
-  var areaNodes = drawAreas(container, plot, allSeries, yMin, yMax, areaStyle, areaMode, fillOpacity, shuffled);
+  var areaNodes = drawAreas(container, plot, allSeries, yMin, yMax, areaStyle, areaMode, fillOpacity, distinctColors);
 
   // Group nodes
   if (gridNodes.length > 1) { var g = figma.group(gridNodes, container); g.name = "Grid"; }

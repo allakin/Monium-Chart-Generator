@@ -79,6 +79,44 @@ var PALETTE = [
   { r: 0.847, g: 0.106, b: 0.376 }, // #D81B60
 ];
 
+// ─── Distinct color selection ───────────────────────────────
+function selectDistinctColors(count) {
+  if (count >= PALETTE.length) {
+    var all = PALETTE.slice();
+    for (var si = all.length - 1; si > 0; si--) {
+      var ri = Math.floor(Math.random() * (si + 1));
+      var tmp = all[si]; all[si] = all[ri]; all[ri] = tmp;
+    }
+    return all;
+  }
+  var used = [];
+  var available = [];
+  for (var i = 0; i < PALETTE.length; i++) available.push(i);
+  var firstIdx = Math.floor(Math.random() * available.length);
+  used.push(available[firstIdx]);
+  available.splice(firstIdx, 1);
+  for (var pick = 1; pick < count; pick++) {
+    var bestIdx = 0;
+    var bestDist = -1;
+    for (var j = 0; j < available.length; j++) {
+      var c = PALETTE[available[j]];
+      var minDist = Infinity;
+      for (var k = 0; k < used.length; k++) {
+        var u = PALETTE[used[k]];
+        var dr = c.r - u.r; var dg = c.g - u.g; var db = c.b - u.b;
+        var d = dr * dr + dg * dg + db * db;
+        if (d < minDist) minDist = d;
+      }
+      if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+    }
+    used.push(available[bestIdx]);
+    available.splice(bestIdx, 1);
+  }
+  var result = [];
+  for (var i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
+  return result;
+}
+
 var COLOR_GRID = { r: 0.898, g: 0.898, b: 0.898 };
 var COLOR_AXIS = { r: 0, g: 0, b: 0 };
 var AXIS_OPACITY = 0.5;
@@ -395,13 +433,9 @@ figma.ui.onmessage = async function (msg) {
     xLabelNodes = drawValueLabelsBottom(container, plot, yValues, yMin, yMax, yUnit);
   }
 
-  var shuffled = PALETTE.slice();
-  for (var si = shuffled.length - 1; si > 0; si--) {
-    var ri = Math.floor(Math.random() * (si + 1));
-    var tmp = shuffled[si]; shuffled[si] = shuffled[ri]; shuffled[ri] = tmp;
-  }
+  var distinctColors = selectDistinctColors(barsCount);
 
-  var barNodes = drawBars(container, plot, allSeries, yMin, yMax, barMode, orientation, shuffled, dense, barGap, fillOpacity);
+  var barNodes = drawBars(container, plot, allSeries, yMin, yMax, barMode, orientation, distinctColors, dense, barGap, fillOpacity);
 
   // Group nodes
   if (gridNodes.length > 1) { var g = figma.group(gridNodes, container); g.name = "Grid"; }
