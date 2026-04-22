@@ -516,6 +516,7 @@ figma.ui.onmessage = async function (msg) {
     linesGroup.name = "Lines";
   } else if (lineNodes.length === 1) {
     lineNodes[0].name = "Lines";
+    container.appendChild(lineNodes[0]); // move to top z-order
   }
 
   if (topEvent) {

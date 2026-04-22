@@ -450,7 +450,7 @@ figma.ui.onmessage = async function (msg) {
   if (yLabelNodes.length > 1) { var g = figma.group(yLabelNodes, container); g.name = "Y Labels"; }
   if (xLabelNodes.length > 1) { var g = figma.group(xLabelNodes, container); g.name = "X Labels"; }
   if (areaNodes.length > 1) { var g = figma.group(areaNodes, container); g.name = "Areas"; }
-  else if (areaNodes.length === 1) { areaNodes[0].name = "Areas"; }
+  else if (areaNodes.length === 1) { areaNodes[0].name = "Areas"; container.appendChild(areaNodes[0]); }
 
   if (topEvent) {
     var evNodes = drawEventBar(container, plot, "top", xLabels.length);

@@ -442,7 +442,7 @@ figma.ui.onmessage = async function (msg) {
   if (yLabelNodes.length > 1) { var g = figma.group(yLabelNodes, container); g.name = "Y Labels"; }
   if (xLabelNodes.length > 1) { var g = figma.group(xLabelNodes, container); g.name = "X Labels"; }
   if (barNodes.length > 1) { var g = figma.group(barNodes, container); g.name = "Bars"; }
-  else if (barNodes.length === 1) { barNodes[0].name = "Bars"; }
+  else if (barNodes.length === 1) { barNodes[0].name = "Bars"; container.appendChild(barNodes[0]); }
 
   if (topEvent) {
     var evNodes = drawEventBar(container, plot, "top", xLabels.length);
