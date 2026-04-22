@@ -21,6 +21,10 @@ Monium Chart Generator/
 │   ├── manifest.json
 │   ├── code.js
 │   └── ui.html
+├── Chart Pie/             ← Pie Chart plugin
+│   ├── manifest.json
+│   ├── code.js
+│   └── ui.html
 └── ...
 ```
 
@@ -173,6 +177,35 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 - Grid lines: vertical lines at X label center positions (vertical orientation), horizontal lines at category center positions (horizontal orientation)
 - Dynamic left padding: measures widest Y-value label (vertical) or widest category label (horizontal)
 
+### Data Slices (Pie Chart specific)
+- Rendered as native Figma ellipses (`figma.createEllipse()`) with `arcData` — NOT vector paths
+- Each slice is a separate ellipse node with the same size/position but different arc angles
+- `arcData` properties:
+  - `startingAngle`: start of arc in radians (measured from x-axis, clockwise)
+  - `endingAngle`: end of arc in radians
+  - `innerRadius`: ratio 0–1 (0 = full pie, >0 = donut)
+- Start angle: `-Math.PI / 2` (12 o'clock / top)
+- Fill: palette color with configurable opacity (default `1.0`, range `0.05–1.0`)
+- No stroke on slices
+- Two chart styles:
+  - **Pie** — full solid slices, no inner hole (`innerRadius: 0`)
+  - **Donut** — annular slices with configurable inner hole (`innerRadius: innerRadiusPct / 100`)
+- **Inner radius %** (Donut only): `30–80%`, default `55%` — controls donut hole size
+- **Corner radius** (Donut only): `0–50px`, default `0` — applies native `cornerRadius` on each ellipse arc, rounding all 4 corners of the annular segment. Only applied when `innerRadius > 0`
+- **Segment gap**: `0–10` degrees, default `1` — angular gap between adjacent slices (split equally on both sides of each slice boundary)
+- **Values input**: comma-separated numbers for exact slice sizes. If empty, random values are generated based on **Segments count** (1–20, default 5). Random range: `5–200` per segment
+- Default chart size (no frame selected): `500 × 500` (square, unlike other charts which use `600 × 400`)
+- Pie geometry: `outerR = (min(w, h) - margin * 2) / 2`, centered at `(w/2, h/2)`. Label margin: `60px` when labels shown, `10px` otherwise
+- **Value labels** (optional): leader lines from each slice's midpoint angle outward, with horizontal elbow and text showing the rounded numeric value
+  - Leader line: vector path (`M`/`L` commands), stroke `#000000` at opacity `0.3`, weight `0.5px`
+  - Radial segment: `40%` of label offset outward from pie edge
+  - Horizontal segment: `50%` of label offset, direction based on which half (left/right) the midpoint angle falls in
+  - Text: font `Inter Regular`, size `11px`, color `rgba(0,0,0,0.5)`, positioned `3px` from horizontal line end
+- **Center total** (optional, Donut only): sum of all values displayed at the pie center
+  - Font: `Inter Regular`, size `28px`, color `{ r: 0.1, g: 0.1, b: 0.1 }`
+  - Horizontally and vertically centered in the donut hole
+- No grid, axes, or event bars (not applicable to pie charts)
+
 ### Container
 - Transparent fill (`fills = []`)
 - `clipsContent = true`
@@ -254,6 +287,19 @@ active: background: #4D7CFE; color: #fff;
 - **Fill opacity** number input: `0.05–1.0`, default `1.0`, step `0.05`
 - **Series count** input: disabled when Bar mode is Normal
 
+### Additional UI Fields (Pie Chart)
+- **Values** text input: comma-separated numbers for exact slice proportions (e.g. `660, 150, 142, 122, 5, 15`). Placeholder text shows example. If empty, random values generated
+- **Segments count** number input: `1–20`, default `5` — **hidden when Values field has valid numbers** (segment count derived from values array length)
+- **Pie style** radio group: `Pie` / `Donut` (default)
+- **Inner radius %** number input: `30–80`, default `55`, step `1` — **visible only when Pie style is Donut**
+- **Corner radius** number input: `0–50`, default `0`, step `1` — **visible only when Pie style is Donut**
+- **Segment gap** number input: `0–10`, default `1`, step `0.5` (degrees between slices)
+- **Display** checkbox group:
+  - **Show value labels** checkbox: toggles leader lines + numeric labels outside the pie
+  - **Show center total** checkbox: toggles sum text in donut center — **visible only when Pie style is Donut**
+- **Fill opacity** number input: `0.05–1.0`, default `1.0`, step `0.05`
+- No **Events** checkboxes (not applicable to pie charts)
+
 ### Section Spacing
 - `16px` between all sections (fields, groups, buttons)
 
@@ -333,7 +379,16 @@ container.setPluginData("chartParams", JSON.stringify({
   orientation: orientation,  // "vertical" | "horizontal"
   barMode: barMode,          // "normal" | "grouped" | "stacked"
   dense: dense,              // boolean
-  barGap: barGap             // 0–50
+  barGap: barGap,            // 0–50
+  // Pie-specific:
+  values: values,            // array of numbers (actual slice values)
+  segmentsCount: segmentsCount, // 1–20
+  pieStyle: pieStyle,        // "pie" | "donut"
+  innerRadiusPct: innerRadiusPct, // 30–80 (donut only)
+  cornerRadius: cornerRadius, // 0–50 (donut only)
+  segmentGap: segmentGap,    // 0–10 (degrees)
+  showLabels: showLabels,    // boolean
+  showTotal: showTotal        // boolean (donut only)
 }));
 ```
 
@@ -357,7 +412,7 @@ function findChartFrame(frame) {
   return null;
 }
 ```
-Each plugin adapts the name check to its own container name (`"Chart Bar"`, `"Chart Area"`, etc.).
+Each plugin adapts the name check to its own container name (`"Chart Bar"`, `"Chart Area"`, `"Chart Pie"`, etc.).
 
 ### Selection Notification
 `sendSelection()` must include chart detection data so the UI can show/hide the button:
@@ -400,6 +455,7 @@ Read from named groups inside the chart container:
 - **"Lines"** / **"Areas"** / **"Bars"** group → count children for series count
 - **"Top Events"** / **"Bottom Events"** group → presence = checkbox enabled
 - **Line style detection**: path data contains `"C"` → smooth; many `"L"` segments → peak; otherwise → sharp
+- **Pie Chart fallback**: `"Slices"` group → count ELLIPSE children for segment count; read `arcData.innerRadius` to detect pie vs donut style and inner radius %; read `cornerRadius` from ellipse node; detect `"Labels"` / `"Center Label"` group presence for display options
 
 ### Layer Structure (required for all chart types)
 All chart elements must be organized into named groups inside the container:
@@ -411,6 +467,14 @@ Chart [Type] (Frame)  [pluginData: chartParams JSON]
 ├── [Data Group] (Group)     ← "Lines", "Areas", "Bars", etc.
 ├── Top Events (Group)       ← optional
 └── Bottom Events (Group)    ← optional
+```
+
+**Pie Chart layer structure** (differs from axis-based charts):
+```
+Chart Pie (Frame)  [pluginData: chartParams JSON]
+├── Slices (Group)           ← Ellipse nodes with arcData
+├── Labels (Group)           ← optional: leader line vectors + value text nodes
+└── Center Label (Group)     ← optional (donut only): total sum text node
 ```
 Use `figma.group(nodes, container)` after creating all nodes in a category.
 

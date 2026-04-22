@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #F7F8FA;
+      color: #1A1A1A;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    h2 { font-size: 15px; font-weight: 600; }
+    .subtitle { font-size: 11px; color: #808080; }
+
+    .target-bar {
+      background: #EEEEF0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-top: 16px;
+      font-size: 11px;
+      color: #808080;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .target-bar.active { background: #E8F0FE; color: #4D7CFE; }
+    .target-bar .icon { flex-shrink: 0; width: 14px; height: 14px; }
+    .target-bar .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .target-bar .size { margin-left: auto; flex-shrink: 0; opacity: 0.7; }
+
+    .btn-regen {
+      display: none;
+      width: 100%;
+      padding: 9px 0;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      background: #4D7CFE;
+      color: #fff;
+      margin-top: 10px;
+    }
+    .btn-regen:hover:not(:disabled) { background: #3A6AE8; }
+    .btn-regen:active:not(:disabled) { transform: scale(0.97); }
+    .btn-regen:disabled { opacity: 0.45; cursor: default; }
+
+    .field { margin-top: 16px; }
+    .field label { display: block; font-size: 11px; color: #808080; margin-bottom: 4px; }
+    .field input[type="text"],
+    .field input[type="number"] {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1.5px solid #E0E0E0;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      color: #1A1A1A;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: #4D7CFE; }
+    .field input::placeholder { color: #AAAAAA; }
+
+    .radio-group {
+      display: flex; gap: 6px;
+    }
+    .radio-option {
+      flex: 1;
+      padding: 7px 0;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      color: #808080;
+      background: #EEEEF0;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .radio-option input { display: none; }
+    .radio-option.active { background: #4D7CFE; color: #fff; }
+    .radio-option:hover:not(.active) { background: #E0E0E0; }
+
+    .checkbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1;
+      color: #1A1A1A;
+      cursor: pointer;
+    }
+    .checkbox-row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      flex-shrink: 0;
+      accent-color: #4D7CFE;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+
+    .btn {
+      width: 100%;
+      margin-top: 16px;
+      padding: 10px 0;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:active:not(:disabled) { transform: scale(0.97); }
+    .btn-primary { background: #4D7CFE; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #3A6AE8; }
+    .btn:disabled { opacity: 0.45; cursor: default; }
+
+    .footer { text-align: center; font-size: 10px; color: #AAAAAA; margin-top: 4px; }
+
+    .error-msg {
+      display: none;
+      font-size: 11px;
+      color: #E53935;
+      margin-top: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <h2>Chart Pie Generator</h2>
+    <p class="subtitle">Monium Design System</p>
+  </div>
+
+  <div class="target-bar" id="targetBar">
+    <svg class="icon" viewBox="0 0 14 14" fill="none">
+      <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+    </svg>
+    <span class="name" id="targetName">Select a Frame or AutoLayout</span>
+    <span class="size" id="targetSize"></span>
+  </div>
+
+  <button class="btn-regen" id="regenBtn" onclick="regenerate()">Get values from chart</button>
+  <div class="error-msg" id="regenError"></div>
+
+  <div class="field">
+    <label>Values (comma-separated, leave empty for random)</label>
+    <input type="text" id="valuesInput" placeholder="e.g. 660, 150, 142, 122, 5, 15" value="">
+  </div>
+
+  <div class="field" id="segmentsRow">
+    <label>Segments count (1–20)</label>
+    <input type="number" id="segmentsInput" value="5" min="1" max="20">
+  </div>
+
+  <div class="field">
+    <label>Pie style</label>
+    <div class="radio-group" id="styleGroup">
+      <label class="radio-option" data-value="pie">
+        <input type="radio" name="pieStyle" value="pie"> Pie
+      </label>
+      <label class="radio-option active" data-value="donut">
+        <input type="radio" name="pieStyle" value="donut" checked> Donut
+      </label>
+    </div>
+  </div>
+
+  <div class="field" id="innerRadiusRow">
+    <label>Inner radius % (30–80)</label>
+    <input type="number" id="innerRadiusInput" value="55" min="30" max="80" step="1">
+  </div>
+
+  <div class="field" id="cornerRadiusRow">
+    <label>Corner radius (0–50)</label>
+    <input type="number" id="cornerRadiusInput" value="0" min="0" max="50" step="1">
+  </div>
+
+  <div class="field">
+    <label>Segment gap (degrees, 0–10)</label>
+    <input type="number" id="gapInput" value="1" min="0" max="10" step="0.5">
+  </div>
+
+  <div class="field">
+    <label>Display</label>
+    <div class="checkbox-group">
+      <label class="checkbox-row">
+        <input type="checkbox" id="labelsCheck"> Show value labels
+      </label>
+      <label class="checkbox-row" id="totalRow">
+        <input type="checkbox" id="totalCheck"> Show center total
+      </label>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Fill opacity (0.05–1.0)</label>
+    <input type="number" id="opacityInput" value="1" min="0.05" max="1" step="0.05">
+  </div>
+
+  <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
+
+  <div class="footer">Monium Design System v1.0</div>
+
+  <script>
+    var storedChartData = null;
+    var replaceMode = false;
+
+    function setInsertEnabled(enabled) {
+      document.getElementById('insertBtn').disabled = !enabled;
+    }
+
+    function setRegenEnabled(enabled) {
+      document.getElementById('regenBtn').disabled = !enabled;
+    }
+
+    function showRegenError(text) {
+      var el = document.getElementById('regenError');
+      el.textContent = text;
+      el.style.display = 'block';
+    }
+
+    function hideRegenError() {
+      document.getElementById('regenError').style.display = 'none';
+    }
+
+    function getPieStyle() {
+      var checked = document.querySelector('input[name="pieStyle"]:checked');
+      return checked ? checked.value : 'donut';
+    }
+
+    function updateDonutVisibility() {
+      var isDonut = (getPieStyle() === 'donut');
+      document.getElementById('innerRadiusRow').style.display = isDonut ? '' : 'none';
+      document.getElementById('cornerRadiusRow').style.display = isDonut ? '' : 'none';
+      document.getElementById('totalRow').style.display = isDonut ? '' : 'none';
+      if (!isDonut) {
+        document.getElementById('totalCheck').checked = false;
+      }
+    }
+
+    function updateSegmentsVisibility() {
+      var val = document.getElementById('valuesInput').value.trim();
+      var hasValues = val.length > 0 && val.split(',').filter(function(s) { return !isNaN(parseFloat(s.trim())) && s.trim().length > 0; }).length > 0;
+      var segRow = document.getElementById('segmentsRow');
+      segRow.style.display = hasValues ? 'none' : '';
+    }
+
+    // Radio toggle for style group
+    document.querySelectorAll('#styleGroup .radio-option').forEach(function(opt) {
+      opt.addEventListener('click', function() {
+        document.querySelectorAll('#styleGroup .radio-option').forEach(function(o) { o.classList.remove('active'); });
+        opt.classList.add('active');
+        opt.querySelector('input').checked = true;
+        updateDonutVisibility();
+      });
+    });
+
+    document.getElementById('valuesInput').addEventListener('input', updateSegmentsVisibility);
+
+    updateDonutVisibility();
+    updateSegmentsVisibility();
+
+    function setRadio(groupId, val) {
+      document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function(o) {
+        o.classList.remove('active');
+        if (o.dataset.value === val) {
+          o.classList.add('active');
+          o.querySelector('input').checked = true;
+        }
+      });
+    }
+
+    function regenerate() {
+      hideRegenError();
+      if (!storedChartData) {
+        showRegenError('Failed to get data: no chart found in selected frame');
+        return;
+      }
+      var d = storedChartData;
+
+      if (d.values && d.values.length > 0) {
+        document.getElementById('valuesInput').value = d.values.join(', ');
+      }
+      document.getElementById('segmentsInput').value = String(d.segmentsCount || 5);
+      setRadio('styleGroup', d.pieStyle || 'donut');
+      document.getElementById('innerRadiusInput').value = String(d.innerRadiusPct || 55);
+      document.getElementById('cornerRadiusInput').value = String(d.cornerRadius || 0);
+      document.getElementById('gapInput').value = String(d.segmentGap !== undefined ? d.segmentGap : 1);
+      document.getElementById('labelsCheck').checked = !!d.showLabels;
+      document.getElementById('totalCheck').checked = !!d.showTotal;
+      document.getElementById('opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
+
+      updateDonutVisibility();
+      updateSegmentsVisibility();
+
+      replaceMode = true;
+      setInsertEnabled(true);
+      setRegenEnabled(false);
+    }
+
+    function generate() {
+      var valRaw = document.getElementById('valuesInput').value.trim();
+      var values = [];
+      if (valRaw.length > 0) {
+        values = valRaw.split(',').map(function(s) { return parseFloat(s.trim()); }).filter(function(n) { return !isNaN(n) && n > 0; });
+      }
+
+      var segmentsCount = Math.max(1, Math.min(20, parseInt(document.getElementById('segmentsInput').value) || 5));
+      var pieStyle = getPieStyle();
+      var innerRadiusPct = Math.max(30, Math.min(80, parseInt(document.getElementById('innerRadiusInput').value) || 55));
+      var cornerRadius = Math.max(0, Math.min(50, parseInt(document.getElementById('cornerRadiusInput').value) || 0));
+      var segmentGap = Math.max(0, Math.min(10, parseFloat(document.getElementById('gapInput').value) || 0));
+      var showLabels = document.getElementById('labelsCheck').checked;
+      var showTotal = document.getElementById('totalCheck').checked;
+      var fillOpacity = Math.max(0.05, Math.min(1, parseFloat(document.getElementById('opacityInput').value) || 1));
+
+      parent.postMessage({ pluginMessage: {
+        type: 'generate',
+        values: values,
+        segmentsCount: segmentsCount,
+        pieStyle: pieStyle,
+        innerRadiusPct: innerRadiusPct,
+        cornerRadius: cornerRadius,
+        segmentGap: segmentGap,
+        showLabels: showLabels,
+        showTotal: showTotal,
+        fillOpacity: fillOpacity,
+        replace: replaceMode
+      }}, '*');
+
+      replaceMode = false;
+      setInsertEnabled(false);
+      if (storedChartData) {
+        setRegenEnabled(true);
+      }
+    }
+
+    window.onmessage = function(event) {
+      var msg = event.data.pluginMessage;
+      if (!msg || msg.type !== 'selection') return;
+
+      var bar = document.getElementById('targetBar');
+      var name = document.getElementById('targetName');
+      var size = document.getElementById('targetSize');
+      var regenBtn = document.getElementById('regenBtn');
+
+      if (msg.hasFrame) {
+        bar.className = 'target-bar active';
+        name.textContent = msg.name;
+        size.textContent = msg.width + ' x ' + msg.height;
+      }
+
+      hideRegenError();
+
+      if (msg.hasChart && msg.chartData) {
+        storedChartData = msg.chartData;
+        regenBtn.style.display = 'block';
+        setRegenEnabled(true);
+        setInsertEnabled(false);
+      } else {
+        storedChartData = null;
+        regenBtn.style.display = 'none';
+        replaceMode = false;
+        setInsertEnabled(true);
+      }
+
+      resizeUI();
+    };
+
+    function resizeUI() {
+      var h = document.body.scrollHeight;
+      parent.postMessage({ pluginMessage: { type: 'resize', height: h } }, '*');
+    }
+
+    resizeUI();
+    new MutationObserver(resizeUI).observe(document.body, { childList: true, subtree: true, attributes: true });
+  </script>
+</body>
+</html>
