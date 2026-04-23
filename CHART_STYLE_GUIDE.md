@@ -478,6 +478,17 @@ Chart Pie (Frame)  [pluginData: chartParams JSON]
 ```
 Use `figma.group(nodes, container)` after creating all nodes in a category.
 
+**Z-order fix for single data element**: `figma.group()` requires at least 2 nodes. When a data category has only 1 node (e.g. 1 line, 1 area), the node stays at its original position in the children array — which is BELOW grid/label groups created by `figma.group()`. Fix: after renaming, move the node to the top via `container.appendChild(node)`:
+```js
+if (dataNodes.length > 1) {
+  var g = figma.group(dataNodes, container);
+  g.name = "Lines"; // or "Areas", "Bars"
+} else if (dataNodes.length === 1) {
+  dataNodes[0].name = "Lines";
+  container.appendChild(dataNodes[0]); // move above grid/labels
+}
+```
+
 ### UI Elements
 **"Get values from chart" button** — placed between target bar and first field:
 ```html
