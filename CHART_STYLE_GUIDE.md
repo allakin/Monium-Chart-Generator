@@ -158,7 +158,11 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 - Three curve styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
 - Two area modes:
   - **Overlap** — each area starts from baseline (bottom of plot area), areas overlap with transparency
-  - **Stacked** — each area stacks on top of the previous one; values are scaled by `stackScale/areasCount` (configurable, default `1.8`, range `1–3`). Stacked values are clamped to `yMax` so areas never exceed the plot boundary. Bottom edge of each stacked area must use the same curve interpolation as the top edge of the area below it (prevents gaps between areas)
+  - **Stacked** — each area stacks on top of the previous one. Two scaling modes:
+    - **Fill full height OFF**: values scaled by `1/areasCount` — standard proportional stacking
+    - **Fill full height ON**: normalization — find the max cumulative sum across all data points, then scale all series so that peak exactly equals `yMax`. No clamping needed, data fits perfectly within the plot area
+    - **Important**: never use fixed scaleFactor + clamp to `yMax` — clamping distorts bezier tangents and causes visual overlap between adjacent areas. Always use normalization for full-height mode
+    - Bottom edge of each stacked area uses the exact mathematical reverse of the top edge of the area below it (`buildCurvePathBidirectional` — swap bezier control points in reverse order). This prevents gaps/overlaps at area boundaries
 
 ### Data Bars (Bar Chart specific)
 - Rendered as rectangles (`figma.createRectangle()`)
@@ -276,7 +280,7 @@ active: background: #4D7CFE; color: #fff;
 
 ### Additional UI Fields (Area Chart)
 - **Area mode** radio group: `Overlap` (default) / `Stacked`
-- **Scale factor** number input: `0.1–3`, default `1.8`, step `0.1` — controls how aggressively stacked areas fill the Y axis. **Visible only when Area mode is Stacked**
+- **Fill full height** checkbox: when checked, normalizes data so the peak cumulative sum exactly equals `yMax` (areas fill full chart height); when unchecked, uses `scaleFactor = 1/areasCount`. **Visible only when Area mode is Stacked**
 - **Fill opacity** number input: `0.05–1.0`, default `0.3`, step `0.05`
 
 ### Additional UI Fields (Bar Chart)

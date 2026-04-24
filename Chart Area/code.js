@@ -297,7 +297,7 @@ function readChartParamsFromLayers(chartFrame) {
   return {
     yValues: yValues, yUnit: yUnit, xLabels: xLabels,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
-    stackScale: 1.8, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
+    fillHeight: false, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
   };
 }
 
@@ -335,7 +335,7 @@ figma.ui.onmessage = async function (msg) {
   var areasCount = msg.areasCount;
   var areaStyle = msg.areaStyle || "smooth";
   var areaMode = msg.areaMode || "overlap";
-  var stackScale = msg.stackScale;
+  var fillHeight = msg.fillHeight || false;
   var fillOpacity = msg.fillOpacity;
   var yUnit = msg.yUnit || "";
   var topEvent = msg.topEvent || false;
@@ -346,15 +346,13 @@ figma.ui.onmessage = async function (msg) {
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!areasCount || areasCount < 1) areasCount = 2;
   if (areasCount > 20) areasCount = 20;
-  if (stackScale === undefined || stackScale === null) stackScale = 1.8;
-  stackScale = Math.max(0.1, Math.min(3, stackScale));
   if (fillOpacity === undefined || fillOpacity === null) fillOpacity = 0.3;
   fillOpacity = Math.max(0.05, Math.min(1, fillOpacity));
 
   var chartParams = {
     yValues: yValues, yUnit: yUnit, xLabels: xLabels,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
-    stackScale: stackScale, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
+    fillHeight: fillHeight, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
   };
 
   var yMin = Math.min.apply(null, yValues);
@@ -416,10 +414,27 @@ figma.ui.onmessage = async function (msg) {
   }
 
   if (areaMode === "stacked" && allSeries.length > 1) {
-    var scaleFactor = stackScale / areasCount;
-    for (var si = 0; si < allSeries.length; si++) {
-      for (var pi = 0; pi < allSeries[si].length; pi++) {
-        allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
+    if (fillHeight) {
+      // Normalize: find max cumulative sum, scale so it exactly equals yMax
+      var maxCum = 0;
+      for (var pi = 0; pi < allSeries[0].length; pi++) {
+        var sum = 0;
+        for (var si = 0; si < allSeries.length; si++) sum += allSeries[si][pi] - yMin;
+        if (sum > maxCum) maxCum = sum;
+      }
+      var targetRange = yMax - yMin;
+      var normScale = (maxCum > 0) ? targetRange / maxCum : 1;
+      for (var si = 0; si < allSeries.length; si++) {
+        for (var pi = 0; pi < allSeries[si].length; pi++) {
+          allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * normScale;
+        }
+      }
+    } else {
+      var scaleFactor = 1 / areasCount;
+      for (var si = 0; si < allSeries.length; si++) {
+        for (var pi = 0; pi < allSeries[si].length; pi++) {
+          allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
+        }
       }
     }
   }
@@ -573,36 +588,36 @@ function drawAreas(parent, p, allSeries, yMin, yMax, areaStyle, areaMode, fillOp
     for (var pi = 0; pi < allSeries[0].length; pi++) cumulativeVals.push(yMin);
   }
 
+  var prevTopReverse = null; // exact reverse of previous area's top curve
+
   for (var li = 0; li < allSeries.length; li++) {
     var vals = allSeries[li];
     var color = colors[li % colors.length];
     var count = vals.length;
     var gap = p.w / (count - 1 || 1);
     var topPoints = [];
-    var bottomPoints = [];
 
     for (var pi = 0; pi < count; pi++) {
       var x = p.x + gap * pi;
       if (areaMode === "stacked") {
         var stackedVal = cumulativeVals[pi] + (vals[pi] - yMin);
-        if (stackedVal > yMax) stackedVal = yMax;
         topPoints.push({ x: x, y: p.y + p.h - ((stackedVal - yMin) / range) * p.h });
-        bottomPoints.push({ x: x, y: p.y + p.h - ((cumulativeVals[pi] - yMin) / range) * p.h });
         cumulativeVals[pi] = stackedVal;
       } else {
         var ratio = (vals[pi] - yMin) / range;
         topPoints.push({ x: x, y: p.y + p.h - ratio * p.h });
-        bottomPoints.push({ x: x, y: baselineY });
       }
     }
 
-    var topPath = buildCurvePath(topPoints, areaStyle, p);
+    var curves = buildCurvePathBidirectional(topPoints, areaStyle, p);
+    var topPath = curves.forward;
     var bottomPath;
-    if (areaMode === "stacked" && li > 0) {
-      bottomPath = buildCurvePathContinuation(bottomPoints.slice().reverse(), areaStyle, p);
+    if (areaMode === "stacked" && li > 0 && prevTopReverse) {
+      bottomPath = prevTopReverse;
     } else {
       bottomPath = " L " + topPoints[topPoints.length - 1].x + " " + baselineY + " L " + topPoints[0].x + " " + baselineY;
     }
+    prevTopReverse = curves.reverse;
 
     var areaVec = figma.createVector();
     areaVec.vectorPaths = [{ windingRule: "NONZERO", data: topPath + bottomPath + " Z" }];
@@ -617,34 +632,13 @@ function drawAreas(parent, p, allSeries, yMin, yMax, areaStyle, areaMode, fillOp
   return nodes;
 }
 
-function buildCurvePath(points, style, p) {
-  var pathData = "M " + points[0].x + " " + points[0].y;
-  if (style === "smooth" && points.length > 2) {
-    var n = points.length;
-    var tangents = [];
-    for (var i = 0; i < n; i++) {
-      if (i === 0) tangents.push((points[1].y - points[0].y) / (points[1].x - points[0].x || 1));
-      else if (i === n - 1) tangents.push((points[n - 1].y - points[n - 2].y) / (points[n - 1].x - points[n - 2].x || 1));
-      else {
-        var m1 = (points[i].y - points[i - 1].y) / (points[i].x - points[i - 1].x || 1);
-        var m2 = (points[i + 1].y - points[i].y) / (points[i + 1].x - points[i].x || 1);
-        tangents.push(m1 * m2 <= 0 ? 0 : (m1 + m2) / 2);
-      }
-    }
-    for (var i = 0; i < n - 1; i++) {
-      var dx = (points[i + 1].x - points[i].x) / 3;
-      var cp1y = Math.max(p.y, Math.min(p.y + p.h, points[i].y + tangents[i] * dx));
-      var cp2y = Math.max(p.y, Math.min(p.y + p.h, points[i + 1].y - tangents[i + 1] * dx));
-      pathData += " C " + (points[i].x + dx) + " " + cp1y + " " + (points[i + 1].x - dx) + " " + cp2y + " " + points[i + 1].x + " " + points[i + 1].y;
-    }
-  } else {
-    for (var i = 1; i < points.length; i++) pathData += " L " + points[i].x + " " + points[i].y;
-  }
-  return pathData;
-}
+// Returns { forward: "M ... C ...", reverse: " L ... C ..." }
+// forward = top curve path (left to right, starts with M)
+// reverse = exact mathematical reverse (right to left, continuation, no M)
+function buildCurvePathBidirectional(points, style, p) {
+  var forward = "M " + points[0].x + " " + points[0].y;
+  var revSegments = []; // individual reversed segments, assembled in reverse order
 
-function buildCurvePathContinuation(points, style, p) {
-  var pathData = " L " + points[0].x + " " + points[0].y;
   if (style === "smooth" && points.length > 2) {
     var n = points.length;
     var tangents = [];
@@ -659,14 +653,29 @@ function buildCurvePathContinuation(points, style, p) {
     }
     for (var i = 0; i < n - 1; i++) {
       var dx = (points[i + 1].x - points[i].x) / 3;
+      var cp1x = points[i].x + dx;
       var cp1y = Math.max(p.y, Math.min(p.y + p.h, points[i].y + tangents[i] * dx));
+      var cp2x = points[i + 1].x - dx;
       var cp2y = Math.max(p.y, Math.min(p.y + p.h, points[i + 1].y - tangents[i + 1] * dx));
-      pathData += " C " + (points[i].x + dx) + " " + cp1y + " " + (points[i + 1].x - dx) + " " + cp2y + " " + points[i + 1].x + " " + points[i + 1].y;
+      forward += " C " + cp1x + " " + cp1y + " " + cp2x + " " + cp2y + " " + points[i + 1].x + " " + points[i + 1].y;
+      // Reverse of C cp1 cp2 Pend = C cp2 cp1 Pstart (swap control points, target is start point)
+      revSegments.push(" C " + cp2x + " " + cp2y + " " + cp1x + " " + cp1y + " " + points[i].x + " " + points[i].y);
     }
   } else {
-    for (var i = 1; i < points.length; i++) pathData += " L " + points[i].x + " " + points[i].y;
+    for (var i = 1; i < points.length; i++) {
+      forward += " L " + points[i].x + " " + points[i].y;
+      revSegments.push(" L " + points[i - 1].x + " " + points[i - 1].y);
+    }
   }
-  return pathData;
+
+  // Assemble reverse: L to last point (ensure correct start), then segments in reverse order
+  var lastPt = points[points.length - 1];
+  var reverse = " L " + lastPt.x + " " + lastPt.y;
+  for (var i = revSegments.length - 1; i >= 0; i--) {
+    reverse += revSegments[i];
+  }
+
+  return { forward: forward, reverse: reverse };
 }
 
 // ─── Event bars ─────────────────────────────────────────────
