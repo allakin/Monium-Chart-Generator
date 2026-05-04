@@ -185,9 +185,10 @@ function readChartParamsFromLayers(chartFrame) {
   var values = [];
 
   if (groups["Slices"] && "children" in groups["Slices"]) {
-    segmentsCount = groups["Slices"].children.length;
+    var slices = groups["Slices"].children;
+    segmentsCount = slices.length;
     if (segmentsCount < 1) segmentsCount = 5;
-    var firstSlice = groups["Slices"].children[0];
+    var firstSlice = slices[0];
     if (firstSlice && firstSlice.fills && firstSlice.fills.length > 0) {
       if (firstSlice.fills[0].opacity !== undefined) {
         fillOpacity = Math.round(firstSlice.fills[0].opacity * 100) / 100;
@@ -197,8 +198,30 @@ function readChartParamsFromLayers(chartFrame) {
     if (firstSlice && firstSlice.type === "ELLIPSE" && firstSlice.arcData) {
       innerRadiusPct = Math.round(firstSlice.arcData.innerRadius * 100);
       pieStyle = (innerRadiusPct > 0) ? "donut" : "pie";
-      if (firstSlice.cornerRadius !== undefined && firstSlice.cornerRadius > 0) {
+      if (firstSlice.cornerRadius !== undefined && typeof firstSlice.cornerRadius === "number" && firstSlice.cornerRadius > 0) {
         cornerRadius = firstSlice.cornerRadius;
+      }
+    }
+
+    // Detect segmentGap from the gap between two consecutive slices.
+    // Each slice's a1 = startAngle + gapRad/2, a2 = startAngle + sliceAngle - gapRad/2,
+    // so slice[i+1].startingAngle - slice[i].endingAngle === gapRad.
+    if (slices.length >= 2 && slices[0].arcData && slices[1].arcData) {
+      var gapRad = slices[1].arcData.startingAngle - slices[0].arcData.endingAngle;
+      if (gapRad > 0 && gapRad < Math.PI) {
+        segmentGap = Math.round(gapRad * 180 / Math.PI * 10) / 10;
+      }
+    }
+
+    // Recover proportional values from slice angles. Original numeric units cannot be
+    // restored, but proportions (in degrees) reproduce the same chart on regeneration.
+    var gapRadEstimate = segmentGap * Math.PI / 180;
+    for (var i = 0; i < slices.length; i++) {
+      if (slices[i].arcData) {
+        var visibleAngle = slices[i].arcData.endingAngle - slices[i].arcData.startingAngle;
+        var fullSliceAngle = visibleAngle + gapRadEstimate;
+        var deg = fullSliceAngle * 180 / Math.PI;
+        values.push(Math.max(0.1, Math.round(deg * 10) / 10));
       }
     }
   }

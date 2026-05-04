@@ -345,14 +345,29 @@ function readAxisChartParamsFromLayers(chartFrame, chartType) {
     result.fillHeight = false;
     result.fillOpacity = 0.3;
     if (groups["Areas"] && "children" in groups["Areas"]) {
-      result.areasCount = groups["Areas"].children.length;
+      var areaChildren = groups["Areas"].children;
+      result.areasCount = areaChildren.length;
       if (result.areasCount < 1) result.areasCount = 1;
-      var firstVec = groups["Areas"].children[0];
+      var firstVec = areaChildren[0];
       if (firstVec && firstVec.type === "VECTOR") {
         result.areaStyle = detectCurveStyle(firstVec, xLabels.length);
         if (firstVec.fills && firstVec.fills.length > 0 && firstVec.fills[0].opacity !== undefined) {
           result.fillOpacity = firstVec.fills[0].opacity;
         }
+      }
+      // Detect areaMode: in overlap, all areas reach baseline; in stacked, area[1] sits on top of area[0]
+      if (areaChildren.length > 1) {
+        var area0Bottom = areaChildren[0].y + areaChildren[0].height;
+        var area1Bottom = areaChildren[1].y + areaChildren[1].height;
+        if (area0Bottom - area1Bottom > 3) result.areaMode = "stacked";
+      }
+      // Detect fillHeight: in stacked mode, the topmost area reaches near the plot top
+      if (result.areaMode === "stacked") {
+        var topArea = areaChildren[areaChildren.length - 1];
+        var groupOffsetY = (groups["Areas"].y !== undefined) ? groups["Areas"].y : 0;
+        var topInChartFrame = groupOffsetY + topArea.y;
+        var plotH = chartFrame.height - PAD_TOP - PAD_BOTTOM;
+        if (topInChartFrame <= PAD_TOP + plotH * 0.15) result.fillHeight = true;
       }
     }
   } else if (chartType === "bar") {
@@ -366,6 +381,60 @@ function readAxisChartParamsFromLayers(chartFrame, chartType) {
       var barRects = groups["Bars"].children;
       if (barRects.length > 0 && barRects[0].fills && barRects[0].fills.length > 0) {
         if (barRects[0].fills[0].opacity !== undefined) result.fillOpacity = barRects[0].fills[0].opacity;
+      }
+
+      if (barRects.length > 0) {
+        // Detect orientation: vertical bars share a baseline; horizontal bars share a left edge.
+        var maxBottom = -Infinity, minLeft = Infinity;
+        for (var bi = 0; bi < barRects.length; bi++) {
+          var bb = barRects[bi].y + barRects[bi].height;
+          if (bb > maxBottom) maxBottom = bb;
+          if (barRects[bi].x < minLeft) minLeft = barRects[bi].x;
+        }
+        var atBottomCount = 0, atLeftCount = 0;
+        for (var bi = 0; bi < barRects.length; bi++) {
+          if (Math.abs((barRects[bi].y + barRects[bi].height) - maxBottom) < 2) atBottomCount++;
+          if (Math.abs(barRects[bi].x - minLeft) < 2) atLeftCount++;
+        }
+        result.orientation = (atBottomCount >= atLeftCount) ? "vertical" : "horizontal";
+
+        // Cluster bars by primary-axis position. Bars at the same position = stacked together.
+        var posKey = (result.orientation === "vertical") ? "x" : "y";
+        var sortedBars = barRects.slice().sort(function (a, b) { return a[posKey] - b[posKey]; });
+        var clusters = [];
+        for (var bi = 0; bi < sortedBars.length; bi++) {
+          var pos = sortedBars[bi][posKey];
+          if (clusters.length === 0 || (pos - clusters[clusters.length - 1].pos) > 1) {
+            clusters.push({ pos: pos, count: 1 });
+          } else {
+            clusters[clusters.length - 1].count++;
+          }
+        }
+        var distinctPositions = clusters.length;
+        var nBars = barRects.length;
+        var barsPerPosition = nBars / distinctPositions;
+        var nCats = xLabels.length || 1;
+
+        if (barsPerPosition >= 1.8) {
+          result.barMode = "stacked";
+          result.barsCount = Math.round(barsPerPosition);
+          result.dense = (distinctPositions > nCats * 1.5);
+        } else {
+          var ratio = nBars / nCats;
+          if (ratio <= 1.5) {
+            result.barMode = "normal";
+            result.barsCount = 1;
+            result.dense = false;
+          } else if (ratio >= 8 && ratio <= 12) {
+            result.barMode = "normal";
+            result.barsCount = 1;
+            result.dense = true;
+          } else {
+            result.barMode = "grouped";
+            result.barsCount = Math.max(2, Math.round(ratio));
+            result.dense = false;
+          }
+        }
       }
     }
   }
@@ -425,9 +494,10 @@ function readPieParamsFromLayers(chartFrame) {
   var values = [];
 
   if (groups["Slices"] && "children" in groups["Slices"]) {
-    segmentsCount = groups["Slices"].children.length;
+    var slices = groups["Slices"].children;
+    segmentsCount = slices.length;
     if (segmentsCount < 1) segmentsCount = 5;
-    var firstSlice = groups["Slices"].children[0];
+    var firstSlice = slices[0];
     if (firstSlice && firstSlice.fills && firstSlice.fills.length > 0) {
       if (firstSlice.fills[0].opacity !== undefined) {
         fillOpacity = Math.round(firstSlice.fills[0].opacity * 100) / 100;
@@ -436,8 +506,30 @@ function readPieParamsFromLayers(chartFrame) {
     if (firstSlice && firstSlice.type === "ELLIPSE" && firstSlice.arcData) {
       innerRadiusPct = Math.round(firstSlice.arcData.innerRadius * 100);
       pieStyle = (innerRadiusPct > 0) ? "donut" : "pie";
-      if (firstSlice.cornerRadius !== undefined && firstSlice.cornerRadius > 0) {
+      if (firstSlice.cornerRadius !== undefined && typeof firstSlice.cornerRadius === "number" && firstSlice.cornerRadius > 0) {
         cornerRadius = firstSlice.cornerRadius;
+      }
+    }
+
+    // Detect segmentGap from the gap between two consecutive slices.
+    // By construction (a1 = startAngle + gapRad/2; a2 = startAngle + sliceAngle - gapRad/2),
+    // slice[i+1].startingAngle - slice[i].endingAngle === gapRad.
+    if (slices.length >= 2 && slices[0].arcData && slices[1].arcData) {
+      var gapRad = slices[1].arcData.startingAngle - slices[0].arcData.endingAngle;
+      if (gapRad > 0 && gapRad < Math.PI) {
+        segmentGap = Math.round(gapRad * 180 / Math.PI * 10) / 10;
+      }
+    }
+
+    // Recover proportional values from slice angles (in degrees, sum ≈ 360).
+    // Original numeric units cannot be restored without pluginData, but proportions are exact.
+    var gapRadEstimate = segmentGap * Math.PI / 180;
+    for (var i = 0; i < slices.length; i++) {
+      if (slices[i].arcData) {
+        var visibleAngle = slices[i].arcData.endingAngle - slices[i].arcData.startingAngle;
+        var fullSliceAngle = visibleAngle + gapRadEstimate;
+        var deg = fullSliceAngle * 180 / Math.PI;
+        values.push(Math.max(0.1, Math.round(deg * 10) / 10));
       }
     }
   }
@@ -715,18 +807,37 @@ function drawXLabelsStandard(parent, p, xLabels) {
 }
 
 // ─── Shared: Monotone cubic bezier path builder ────────────────
+// Uses Fritsch-Carlson constraint to prevent overshoots: smooth curves stay
+// within the data range between points (no "wobbles" with noisy series).
 function buildCurvePath(points, style, p) {
   var pathData = "M " + points[0].x + " " + points[0].y;
   if (style === "smooth" && points.length > 2) {
     var n = points.length;
+    var slopes = [];
+    for (var i = 0; i < n - 1; i++) {
+      var sdx = points[i + 1].x - points[i].x;
+      slopes.push((points[i + 1].y - points[i].y) / (sdx || 1));
+    }
     var tangents = [];
-    for (var i = 0; i < n; i++) {
-      if (i === 0) tangents.push((points[1].y - points[0].y) / (points[1].x - points[0].x || 1));
-      else if (i === n - 1) tangents.push((points[n - 1].y - points[n - 2].y) / (points[n - 1].x - points[n - 2].x || 1));
-      else {
-        var m1 = (points[i].y - points[i - 1].y) / (points[i].x - points[i - 1].x || 1);
-        var m2 = (points[i + 1].y - points[i].y) / (points[i + 1].x - points[i].x || 1);
-        tangents.push(m1 * m2 <= 0 ? 0 : (m1 + m2) / 2);
+    tangents.push(slopes[0]);
+    for (var i = 1; i < n - 1; i++) {
+      if (slopes[i - 1] * slopes[i] <= 0) tangents.push(0);
+      else tangents.push((slopes[i - 1] + slopes[i]) / 2);
+    }
+    tangents.push(slopes[n - 2]);
+    for (var i = 0; i < n - 1; i++) {
+      if (slopes[i] === 0) {
+        tangents[i] = 0;
+        tangents[i + 1] = 0;
+      } else {
+        var a = tangents[i] / slopes[i];
+        var b = tangents[i + 1] / slopes[i];
+        var h2 = a * a + b * b;
+        if (h2 > 9) {
+          var t = 3 / Math.sqrt(h2);
+          tangents[i] = t * a * slopes[i];
+          tangents[i + 1] = t * b * slopes[i];
+        }
       }
     }
     for (var i = 0; i < n - 1; i++) {
@@ -750,14 +861,32 @@ function buildCurvePathBidirectional(points, style, p) {
 
   if (style === "smooth" && points.length > 2) {
     var n = points.length;
+    var slopes = [];
+    for (var i = 0; i < n - 1; i++) {
+      var sdx = points[i + 1].x - points[i].x;
+      slopes.push((points[i + 1].y - points[i].y) / (sdx || 1));
+    }
     var tangents = [];
-    for (var i = 0; i < n; i++) {
-      if (i === 0) tangents.push((points[1].y - points[0].y) / (points[1].x - points[0].x || 1));
-      else if (i === n - 1) tangents.push((points[n - 1].y - points[n - 2].y) / (points[n - 1].x - points[n - 2].x || 1));
-      else {
-        var m1 = (points[i].y - points[i - 1].y) / (points[i].x - points[i - 1].x || 1);
-        var m2 = (points[i + 1].y - points[i].y) / (points[i + 1].x - points[i].x || 1);
-        tangents.push(m1 * m2 <= 0 ? 0 : (m1 + m2) / 2);
+    tangents.push(slopes[0]);
+    for (var i = 1; i < n - 1; i++) {
+      if (slopes[i - 1] * slopes[i] <= 0) tangents.push(0);
+      else tangents.push((slopes[i - 1] + slopes[i]) / 2);
+    }
+    tangents.push(slopes[n - 2]);
+    // Fritsch-Carlson constraint: prevents overshoots so the curve stays within the data range
+    for (var i = 0; i < n - 1; i++) {
+      if (slopes[i] === 0) {
+        tangents[i] = 0;
+        tangents[i + 1] = 0;
+      } else {
+        var a = tangents[i] / slopes[i];
+        var b = tangents[i + 1] / slopes[i];
+        var h2 = a * a + b * b;
+        if (h2 > 9) {
+          var t = 3 / Math.sqrt(h2);
+          tangents[i] = t * a * slopes[i];
+          tangents[i + 1] = t * b * slopes[i];
+        }
       }
     }
     for (var i = 0; i < n - 1; i++) {

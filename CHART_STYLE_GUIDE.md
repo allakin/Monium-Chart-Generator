@@ -144,7 +144,8 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 - Stroke weight: `2px`
 - Stroke cap: `NONE` (no rounding at line start/end)
 - Stroke join: `ROUND`
-- Three styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
+- Three styles: Smooth (monotone cubic bezier with **Fritsch-Carlson constraint**), Sharp (straight segments), Peak (10x points with spikes)
+- **Fritsch-Carlson constraint** for Smooth: after computing initial tangents (arithmetic mean of neighbouring slopes; 0 at extrema), apply the monotonicity test for each segment — if `α² + β² > 9` (where `α = tangent[i] / slope[i]`, `β = tangent[i+1] / slope[i]`), scale tangents down by `3 / sqrt(α² + β²)`. This prevents the curve from overshooting the data range between points, which otherwise creates visible "wobbles" in charts with many random/noisy series
 
 ### Data Areas (Area Chart specific)
 - Rendered as closed vector shapes (top curve + bottom baseline/previous series curve)
@@ -155,7 +156,7 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
   - Weight: `0.2px`
   - Align: `INSIDE`
   - Join: `ROUND`
-- Three curve styles: Smooth (monotone cubic bezier), Sharp (straight segments), Peak (10x points with spikes)
+- Three curve styles: Smooth (monotone cubic bezier with **Fritsch-Carlson constraint** — same as Line Chart, see "Data Lines" section), Sharp (straight segments), Peak (10x points with spikes)
 - Two area modes:
   - **Overlap** — each area starts from baseline (bottom of plot area), areas overlap with transparency
   - **Stacked** — each area stacks on top of the previous one. Two scaling modes:
@@ -458,8 +459,29 @@ Read from named groups inside the chart container:
 - **"X Labels"** group → read text node `.characters`, sort by x-position
 - **"Lines"** / **"Areas"** / **"Bars"** group → count children for series count
 - **"Top Events"** / **"Bottom Events"** group → presence = checkbox enabled
-- **Line style detection**: path data contains `"C"` → smooth; many `"L"` segments → peak; otherwise → sharp
-- **Pie Chart fallback**: `"Slices"` group → count ELLIPSE children for segment count; read `arcData.innerRadius` to detect pie vs donut style and inner radius %; read `cornerRadius` from ellipse node; detect `"Labels"` / `"Center Label"` group presence for display options
+- **Curve style detection** (Line, Area): path data contains `"C"` → smooth; no `"C"` and many `"L"` segments (`> xLabels.length * 3`) → peak; otherwise → sharp
+
+**Area Chart fallback — mode + fillHeight detection** (in addition to style):
+- **`areaMode`** — compare bottom edges of `area[0]` and `area[1]`: in Overlap, both areas reach baseline (bottom y values within `~3px`); in Stacked, `area[1]` sits on top of `area[0]` so its bottom is significantly higher. Rule: if `area[0].bottom - area[1].bottom > 3` → `stacked`, otherwise `overlap`
+- **`fillHeight`** — only applies in Stacked mode: read the topmost area's chart-frame y-coord (`group.y + topArea.y`). With Fill full height ON, the cumulative peak normalizes exactly to `yMax`, so the topmost area's top edge sits near `PAD_TOP`. With Fill full height OFF, peaks land roughly halfway down the plot. Rule: if `topInChartFrame <= PAD_TOP + plotH * 0.15` → `fillHeight = true`
+
+**Bar Chart fallback — orientation + mode + dense + barsCount detection**:
+- **`orientation`** — count bars whose bottom edge equals the global `maxBottom` vs bars whose left edge equals the global `minLeft`. Vertical bars share a baseline (more `atBottomCount`), horizontal bars share a left origin (more `atLeftCount`). Rule: if `atBottomCount >= atLeftCount` → `vertical`, otherwise `horizontal`
+- **Cluster bars** by primary-axis position (`x` for vertical, `y` for horizontal): consecutive sorted bars within `1px` form one cluster. Compute `barsPerPosition = nBars / clusterCount`
+- **`barMode` + `barsCount` + `dense`**:
+  - `barsPerPosition >= 1.8` → **Stacked** (multiple bars share the same primary-axis position). `barsCount = round(barsPerPosition)`. `dense = (clusterCount > xLabels.length * 1.5)`
+  - All positions unique → split by `ratio = nBars / xLabels.length`:
+    - `ratio <= 1.5` → **Normal**, `barsCount = 1`, `dense = false`
+    - `8 <= ratio <= 12` → **Normal + Dense** (10× data points), `barsCount = 1`, `dense = true`
+    - Otherwise → **Grouped**, `barsCount = round(ratio)`, `dense = false` (Grouped never has dense)
+
+**Pie Chart fallback** — `"Slices"` group:
+- Count ELLIPSE children → `segmentsCount`
+- `arcData.innerRadius` → pie/donut + `innerRadiusPct = round(innerRadius * 100)`
+- `firstSlice.cornerRadius` (when numeric and > 0) → `cornerRadius`
+- Detect `"Labels"` / `"Center Label"` group presence for display options
+- **`segmentGap`** — gap between two consecutive slices in radians: `slices[1].arcData.startingAngle - slices[0].arcData.endingAngle`. By construction in `drawSlices` (`a1 = startAngle + gapRad/2`, `a2 = startAngle + sliceAngle - gapRad/2`), this difference equals exactly `gapRad`. Convert to degrees: `gapDeg = gapRad * 180 / PI`
+- **`values`** — recover proportional values from arc angles: each slice's actual angle = `(endingAngle - startingAngle) + gapRad`. Convert to degrees and round to 1 decimal (sum ≈ 360). Use `Math.max(0.1, ...)` to avoid zero values. Original numeric units cannot be restored without `pluginData`, but proportions are exact, so re-rendering produces an identical chart
 
 ### Layer Structure (required for all chart types)
 All chart elements must be organized into named groups inside the container:

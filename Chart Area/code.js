@@ -193,6 +193,7 @@ function readChartParamsFromLayers(chartFrame) {
   var areasCount = 1;
   var areaStyle = "smooth";
   var areaMode = "overlap";
+  var fillHeight = false;
   var fillOpacity = 0.3;
   var topEvent = false;
   var bottomEvent = false;
@@ -238,6 +239,28 @@ function readChartParamsFromLayers(chartFrame) {
       } catch (e) {}
       if (firstVec.fills && firstVec.fills.length > 0 && firstVec.fills[0].opacity !== undefined) {
         fillOpacity = firstVec.fills[0].opacity;
+      }
+    }
+
+    // Detect areaMode: in overlap, all areas reach baseline; in stacked, area[1] sits on top of area[0]
+    if (groups["Areas"].children.length > 1) {
+      var area0 = groups["Areas"].children[0];
+      var area1 = groups["Areas"].children[1];
+      var area0Bottom = area0.y + area0.height;
+      var area1Bottom = area1.y + area1.height;
+      if (area0Bottom - area1Bottom > 3) {
+        areaMode = "stacked";
+      }
+    }
+
+    // Detect fillHeight: in stacked mode, the topmost area reaches near the plot top
+    if (areaMode === "stacked") {
+      var topArea = groups["Areas"].children[groups["Areas"].children.length - 1];
+      var groupOffsetY = (groups["Areas"].y !== undefined) ? groups["Areas"].y : 0;
+      var topInChartFrame = groupOffsetY + topArea.y;
+      var plotH = chartFrame.height - PAD_TOP - PAD_BOTTOM;
+      if (topInChartFrame <= PAD_TOP + plotH * 0.15) {
+        fillHeight = true;
       }
     }
   }
@@ -297,7 +320,7 @@ function readChartParamsFromLayers(chartFrame) {
   return {
     yValues: yValues, yUnit: yUnit, xLabels: xLabels,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
-    fillHeight: false, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
+    fillHeight: fillHeight, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent
   };
 }
 
@@ -641,16 +664,40 @@ function buildCurvePathBidirectional(points, style, p) {
 
   if (style === "smooth" && points.length > 2) {
     var n = points.length;
+
+    // Slopes between consecutive points
+    var slopes = [];
+    for (var i = 0; i < n - 1; i++) {
+      var sdx = points[i + 1].x - points[i].x;
+      slopes.push((points[i + 1].y - points[i].y) / (sdx || 1));
+    }
+
+    // Initial tangents: arithmetic mean for interior, slopes for endpoints; 0 at extrema
     var tangents = [];
-    for (var i = 0; i < n; i++) {
-      if (i === 0) tangents.push((points[1].y - points[0].y) / (points[1].x - points[0].x || 1));
-      else if (i === n - 1) tangents.push((points[n - 1].y - points[n - 2].y) / (points[n - 1].x - points[n - 2].x || 1));
-      else {
-        var m1 = (points[i].y - points[i - 1].y) / (points[i].x - points[i - 1].x || 1);
-        var m2 = (points[i + 1].y - points[i].y) / (points[i + 1].x - points[i].x || 1);
-        tangents.push(m1 * m2 <= 0 ? 0 : (m1 + m2) / 2);
+    tangents.push(slopes[0]);
+    for (var i = 1; i < n - 1; i++) {
+      if (slopes[i - 1] * slopes[i] <= 0) tangents.push(0);
+      else tangents.push((slopes[i - 1] + slopes[i]) / 2);
+    }
+    tangents.push(slopes[n - 2]);
+
+    // Fritsch-Carlson constraint: prevents overshoots so the curve stays within the data range
+    for (var i = 0; i < n - 1; i++) {
+      if (slopes[i] === 0) {
+        tangents[i] = 0;
+        tangents[i + 1] = 0;
+      } else {
+        var a = tangents[i] / slopes[i];
+        var b = tangents[i + 1] / slopes[i];
+        var h2 = a * a + b * b;
+        if (h2 > 9) {
+          var t = 3 / Math.sqrt(h2);
+          tangents[i] = t * a * slopes[i];
+          tangents[i + 1] = t * b * slopes[i];
+        }
       }
     }
+
     for (var i = 0; i < n - 1; i++) {
       var dx = (points[i + 1].x - points[i].x) / 3;
       var cp1x = points[i].x + dx;
@@ -658,7 +705,6 @@ function buildCurvePathBidirectional(points, style, p) {
       var cp2x = points[i + 1].x - dx;
       var cp2y = Math.max(p.y, Math.min(p.y + p.h, points[i + 1].y - tangents[i + 1] * dx));
       forward += " C " + cp1x + " " + cp1y + " " + cp2x + " " + cp2y + " " + points[i + 1].x + " " + points[i + 1].y;
-      // Reverse of C cp1 cp2 Pend = C cp2 cp1 Pstart (swap control points, target is start point)
       revSegments.push(" C " + cp2x + " " + cp2y + " " + cp1x + " " + cp1y + " " + points[i].x + " " + points[i].y);
     }
   } else {

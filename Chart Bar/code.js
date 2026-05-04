@@ -229,6 +229,66 @@ function readChartParamsFromLayers(chartFrame) {
     if (barRects.length > 0 && barRects[0].fills && barRects[0].fills.length > 0) {
       if (barRects[0].fills[0].opacity !== undefined) fillOpacity = barRects[0].fills[0].opacity;
     }
+
+    if (barRects.length > 0) {
+      // Detect orientation: in vertical, bars share the same bottom (baseline);
+      // in horizontal, bars share the same left edge.
+      var maxBottom = -Infinity, minLeft = Infinity;
+      for (var i = 0; i < barRects.length; i++) {
+        var b = barRects[i].y + barRects[i].height;
+        if (b > maxBottom) maxBottom = b;
+        if (barRects[i].x < minLeft) minLeft = barRects[i].x;
+      }
+      var atBottomCount = 0, atLeftCount = 0;
+      for (var i = 0; i < barRects.length; i++) {
+        if (Math.abs((barRects[i].y + barRects[i].height) - maxBottom) < 2) atBottomCount++;
+        if (Math.abs(barRects[i].x - minLeft) < 2) atLeftCount++;
+      }
+      orientation = (atBottomCount >= atLeftCount) ? "vertical" : "horizontal";
+
+      // Cluster bars by primary axis position (x for vertical, y for horizontal).
+      // Bars at the same exact position = stacked together.
+      var posKey = (orientation === "vertical") ? "x" : "y";
+      var sortedBars = barRects.slice().sort(function (a, b) { return a[posKey] - b[posKey]; });
+      var clusters = [];
+      for (var i = 0; i < sortedBars.length; i++) {
+        var pos = sortedBars[i][posKey];
+        if (clusters.length === 0 || (pos - clusters[clusters.length - 1].pos) > 1) {
+          clusters.push({ pos: pos, count: 1 });
+        } else {
+          clusters[clusters.length - 1].count++;
+        }
+      }
+      var distinctPositions = clusters.length;
+      var nBars = barRects.length;
+      var barsPerPosition = nBars / distinctPositions;
+      var nCats = xLabels.length || 1;
+
+      if (barsPerPosition >= 1.8) {
+        // Multiple bars share the same primary-axis position -> stacked
+        barMode = "stacked";
+        barsCount = Math.round(barsPerPosition);
+        // Dense: positions span >> nCats (each category has multiple data points)
+        dense = (distinctPositions > nCats * 1.5);
+      } else {
+        // All unique positions: either normal, normal+dense, or grouped
+        var ratio = nBars / nCats;
+        if (ratio <= 1.5) {
+          barMode = "normal";
+          barsCount = 1;
+          dense = false;
+        } else if (ratio >= 8 && ratio <= 12) {
+          // ~10x bars per category: most likely normal + dense
+          barMode = "normal";
+          barsCount = 1;
+          dense = true;
+        } else {
+          barMode = "grouped";
+          barsCount = Math.max(2, Math.round(ratio));
+          dense = false;
+        }
+      }
+    }
   }
 
   topEvent = !!groups["Top Events"];
