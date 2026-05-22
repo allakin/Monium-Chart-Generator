@@ -564,6 +564,253 @@ if (!d.yValues || d.yValues.length < 2) {
 
 ---
 
+## Copy / Paste exact copy (shared pattern for all chart types)
+
+In addition to **re-generation** (which preserves only the *parameters* and re-randomizes the underlying data each time), plugins must support **exact copy** — taking a previously generated chart's full data, including randomized values and colors, and reproducing it pixel-equivalent in another frame (or replacing the same one).
+
+The key difference:
+- **Re-generate**: same parameters → new random data and colors.
+- **Copy + Paste**: same parameters → **same** data, **same** colors, **same** event-bar layout.
+
+The primary use case is building visually-identical chart pairs/grids for side-by-side comparison.
+
+### User Flow
+1. User selects a frame containing a previously generated chart.
+2. Plugin shows both **"Get values from chart"** (existing) and **"Copy chart"** (new) buttons.
+3. User clicks **"Copy chart"** → full chart data is captured to the plugin's in-memory clipboard. A yellow banner appears with a brief summary (e.g. `"Copied: 3 lines · Smooth"`) and an `×` to clear.
+4. User selects another frame (or stays on the same one). The clipboard persists across selection changes.
+5. User clicks **"Paste exact copy"** → identical chart is generated in the target frame, replacing any chart already present there. The clipboard remains, so multiple pastes are supported (one source → many identical copies in different frames).
+
+### Storing Full Chart Data — `setPluginData`
+The chart container's `chartParams` JSON is extended to also store the data needed to reproduce the chart pixel-equivalent:
+```js
+container.setPluginData("chartParams", JSON.stringify({
+  // ... all existing parameters (yValues, xLabels, linesCount/areasCount/..., etc.) ...
+
+  // ── Data needed for exact copy ──
+  allSeries: allSeries,                  // [[v1, v2, ...], ...] random series data (Line/Area/Bar)
+  colors: distinctColors,                // [{r,g,b}, ...] color per series/segment
+  topEventSegments: topEventSegments,    // [{x, w, color: {r,g,b}, opacity}, ...] or null
+  bottomEventSegments: bottomEventSegments
+}));
+```
+**Pie Chart**: store only `colors` (slice `values` are already deterministic in chartParams; no event bars).
+
+### Event Segments — Normalized 0..1
+Refactor the existing `drawEventBar` function into two: **`buildEventSegments(position)`** generates segment specs with `x` and `w` as **fractions of plot width** (0..1), and **`drawEventSegments(parent, p, position, segments)`** converts fractions to pixels at render time. This is what makes event bars scale proportionally when pasted into a different-sized frame.
+
+```js
+function buildEventSegments(position) {
+  // Segments use x and w as fractions of plot width (0..1) so the layout
+  // is identical when re-rendered into a differently-sized frame.
+  var segments = [];
+  var segMinW = 0.02, segMaxW = 0.08;
+  var gapMinW = 0.005, gapMaxW = 0.04;
+  var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
+  var x = 0;
+  while (x < 1) {
+    var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
+    x += gap;
+    if (x >= 1) break;
+    var segW = segMinW + Math.random() * (segMaxW - segMinW);
+    if (x + segW > 1) segW = 1 - x;
+    if (segW < 0.001) break;
+    var color = palette[Math.floor(Math.random() * palette.length)];
+    var opacity = 0.4 + Math.random() * 0.6;
+    segments.push({ x: x, w: segW, color: color, opacity: opacity });
+    x += segW;
+  }
+  return segments;
+}
+
+function drawEventSegments(parent, p, position, segments) {
+  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
+  var nodes = [];
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
+    var rect = figma.createRectangle();
+    rect.x = p.x + s.x * p.w;
+    rect.y = y;
+    rect.resize(s.w * p.w, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: s.color, opacity: s.opacity }];
+    parent.appendChild(rect);
+    nodes.push(rect);
+  }
+  return nodes;
+}
+```
+
+### Render Function — `renderChart(params, exactData)`
+Extract the chart-build logic from the `generate` handler into a single async function `renderChart(params, exactData)`. When `exactData` is provided, the function reuses the supplied `allSeries`, `colors`, and event segments instead of randomizing. The `generate` and `paste` message handlers both delegate to it.
+
+```js
+async function renderChart(params, exactData) {
+  // ... read params, resolve target, build container as before ...
+  // Force replaceMode=true when exactData is set
+  var replaceMode = exactData ? true : (params.replace || false);
+
+  // Reuse exact series data if provided, else randomize
+  var allSeries;
+  if (exactData && exactData.allSeries && exactData.allSeries.length === seriesCount) {
+    allSeries = exactData.allSeries;
+  } else {
+    allSeries = [];
+    for (var li = 0; li < seriesCount; li++) { /* fill with Math.random()... */ }
+
+    // CRITICAL (Area/Bar with stacked mode): any in-place scaling of allSeries
+    // (e.g. `vals[pi] = yMin + (vals[pi] - yMin) * scaleFactor` for stacked)
+    // MUST live inside this else branch. The stored allSeries is already
+    // post-scaling, so applying it again on paste would double-scale.
+    if (mode === "stacked") { /* scale in place */ }
+  }
+
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === seriesCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(seriesCount);
+  }
+
+  var topEventSegments = topEvent
+    ? (exactData && exactData.topEventSegments ? exactData.topEventSegments : buildEventSegments("top"))
+    : null;
+  var bottomEventSegments = bottomEvent
+    ? (exactData && exactData.bottomEventSegments ? exactData.bottomEventSegments : buildEventSegments("bottom"))
+    : null;
+
+  // ... draw using allSeries / distinctColors / segments; group nodes; setPluginData ...
+
+  // Notify
+  figma.notify(exactData ? "Exact copy pasted!" : (replaceMode ? "Chart regenerated!" : "Chart added to ..."));
+}
+
+figma.ui.onmessage = async function (msg) {
+  if (msg.type === "resize") { /* ... */ return; }
+  if (msg.type === "generate") { await renderChart(msg, null); return; }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
+```
+
+### UI Elements
+
+**CSS** (added alongside `.btn-regen`):
+```css
+.btn-copy {
+  display: none;
+  width: 100%; padding: 9px 0; border: none; border-radius: 8px;
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all 0.15s; background: #EEEEF0; color: #1A1A1A; margin-top: 6px;
+}
+.btn-copy:hover:not(:disabled) { background: #E0E0E0; }
+.btn-copy:active:not(:disabled) { transform: scale(0.97); }
+.btn-copy:disabled { opacity: 0.45; cursor: default; }
+
+.clipboard-box {
+  display: none;
+  background: #FFF6E0; border: 1px solid #F5D78A; border-radius: 6px;
+  padding: 8px 10px; margin-top: 10px;
+}
+.clipboard-box .row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #7A5A0F; }
+.clipboard-box .summary { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clipboard-box .clear-btn {
+  border: none; background: transparent; color: #7A5A0F; cursor: pointer;
+  font-size: 16px; padding: 0 4px; line-height: 1;
+}
+.clipboard-box .clear-btn:hover { color: #1A1A1A; }
+
+.btn-paste {
+  width: 100%; margin-top: 8px; padding: 8px 0; border: none; border-radius: 6px;
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all 0.15s; background: #1A1A1A; color: #fff;
+}
+.btn-paste:hover:not(:disabled) { background: #333; }
+.btn-paste:active:not(:disabled) { transform: scale(0.97); }
+.btn-paste:disabled { opacity: 0.45; cursor: default; }
+```
+
+**HTML** (placed immediately after the existing `regenBtn` + `regenError`):
+```html
+<button class="btn-copy" id="copyBtn" onclick="copyChart()">Copy chart</button>
+<div class="error-msg" id="regenError"></div>
+
+<div class="clipboard-box" id="clipboardBox">
+  <div class="row">
+    <span class="summary" id="clipboardSummary">Chart copied</span>
+    <button class="clear-btn" onclick="clearCopy()" title="Clear clipboard">×</button>
+  </div>
+  <button class="btn-paste" id="pasteBtn" onclick="pasteChart()">Paste exact copy</button>
+</div>
+```
+
+**JS** (added to the existing `<script>` block):
+```js
+var copiedChart = null;
+
+function copyChart() {
+  hideRegenError();
+  if (!storedChartData) return;
+  // Gate: require fields that newer pluginData provides
+  if (!storedChartData.colors || (!storedChartData.allSeries && !storedChartData.values)) {
+    showRegenError('Exact copy unavailable: this chart was generated by an older version. Regenerate it once to enable Copy.');
+    return;
+  }
+  copiedChart = JSON.parse(JSON.stringify(storedChartData));
+  updateClipboardUI();
+  resizeUI();
+}
+
+function pasteChart() {
+  if (!copiedChart) return;
+  parent.postMessage({ pluginMessage: { type: 'paste', chartData: copiedChart } }, '*');
+}
+
+function clearCopy() {
+  copiedChart = null;
+  updateClipboardUI();
+  resizeUI();
+}
+
+function updateClipboardUI() {
+  var box = document.getElementById('clipboardBox');
+  if (copiedChart) {
+    // Adapt summary to chart-specific field names
+    var n = copiedChart.linesCount || copiedChart.areasCount || copiedChart.barsCount || copiedChart.segmentsCount || 0;
+    var style = copiedChart.lineStyle || copiedChart.areaStyle || copiedChart.barMode || copiedChart.pieStyle || '';
+    var label = style ? (style.charAt(0).toUpperCase() + style.slice(1)) : '';
+    var noun = copiedChart.linesCount ? 'line'
+            : copiedChart.areasCount ? 'area'
+            : copiedChart.barsCount ? 'bar series'
+            : 'segment';
+    document.getElementById('clipboardSummary').textContent =
+      'Copied: ' + n + ' ' + noun + (n === 1 ? '' : 's') + (label ? ' · ' + label : '');
+    box.style.display = 'block';
+  } else {
+    box.style.display = 'none';
+  }
+}
+```
+
+In `window.onmessage`, alongside the existing `regenBtn` handling, also show/hide `copyBtn` (same condition as `regenBtn`) and call `updateClipboardUI()` once.
+
+### Pie Chart Specifics
+- **No** `buildEventSegments` / `drawEventSegments` refactor — Pie has no event bars.
+- **No** `allSeries` field — slice `values` are already deterministic in `chartParams`.
+- Store **only** `colors` alongside existing fields.
+- `copyChart()` gating checks `!storedChartData.colors` (instead of `!storedChartData.allSeries`).
+- Clipboard summary reads `segmentsCount` and `pieStyle`.
+
+### Stacked-mode Scaling Pitfall (Area & Bar)
+Both Area (stacked) and Bar (stacked) mutate `allSeries` in-place to scale values so the stack fits within `yMax`. The post-scaling array is what gets stored in `pluginData`. When pasting, scaling MUST NOT be reapplied — keep the scaling block strictly inside the **else** branch of the `if (exactData?.allSeries)` check.
+
+### Backward Compatibility
+Charts generated before this change have `pluginData` without `allSeries` / `colors`. The Copy button shows an inline error guiding the user: *"Exact copy unavailable: this chart was generated by an older version. Regenerate it once to enable Copy."* The clipboard remains usable across plugin runs for newer charts. The clipboard is in-memory only — it does not persist across plugin restarts.
+
+---
+
 ## Figma Plugin Code Patterns
 
 ### Selection Tracking

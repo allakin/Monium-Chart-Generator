@@ -386,24 +386,40 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 900));
     return;
   }
-  if (msg.type !== "generate") return;
+  if (msg.type === "generate") {
+    await renderChart(msg, null);
+    return;
+  }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
 
+async function renderChart(params, exactData) {
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-  var values = msg.values || [];
-  var segmentsCount = msg.segmentsCount || 5;
-  var pieStyle = msg.pieStyle || "donut";
-  var innerRadiusPct = msg.innerRadiusPct || 55;
-  var cornerRadius = msg.cornerRadius || 0;
-  var segmentGap = (msg.segmentGap !== undefined) ? msg.segmentGap : 1;
-  var showLabels = msg.showLabels || false;
-  var showTotal = msg.showTotal || false;
-  var fillOpacity = (msg.fillOpacity !== undefined) ? msg.fillOpacity : 1;
+  var values = params.values || [];
+  var segmentsCount = params.segmentsCount || 5;
+  var pieStyle = params.pieStyle || "donut";
+  var innerRadiusPct = params.innerRadiusPct || 55;
+  var cornerRadius = params.cornerRadius || 0;
+  var segmentGap = (params.segmentGap !== undefined) ? params.segmentGap : 1;
+  var showLabels = params.showLabels || false;
+  var showTotal = params.showTotal || false;
+  var fillOpacity = (params.fillOpacity !== undefined) ? params.fillOpacity : 1;
   fillOpacity = Math.max(0.05, Math.min(1, fillOpacity));
-  var replaceMode = msg.replace || false;
+  // Paste always replaces a chart inside the target frame (if present),
+  // matching the regenerate flow's replace=true semantics.
+  var replaceMode = exactData ? true : (params.replace || false);
 
-  // Generate random values if none provided
-  if (!values || values.length < 1) {
+  // Resolve values:
+  //  - exactData: use the source's deterministic values directly
+  //  - otherwise: keep existing logic (random fill when empty)
+  if (exactData) {
+    values = params.values;
+  } else if (!values || values.length < 1) {
     values = [];
     for (var i = 0; i < segmentsCount; i++) {
       values.push(Math.round(5 + Math.random() * 195));
@@ -411,18 +427,6 @@ figma.ui.onmessage = async function (msg) {
   }
 
   segmentsCount = values.length;
-
-  var chartParams = {
-    values: values,
-    segmentsCount: segmentsCount,
-    pieStyle: pieStyle,
-    innerRadiusPct: innerRadiusPct,
-    cornerRadius: cornerRadius,
-    segmentGap: segmentGap,
-    showLabels: showLabels,
-    showTotal: showTotal,
-    fillOpacity: fillOpacity
-  };
 
   var target = getTargetFrame();
   var w, h;
@@ -467,7 +471,13 @@ figma.ui.onmessage = async function (msg) {
   var innerR = (pieStyle === "donut") ? outerR * (innerRadiusPct / 100) : 0;
   var cr = (pieStyle === "donut") ? cornerRadius : 0;
 
-  var distinctColors = selectDistinctColors(segmentsCount);
+  // Reuse exact colors if provided, else generate distinct ones
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === segmentsCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(segmentsCount);
+  }
 
   // Draw slices
   var sliceNodes = drawSlices(container, cx, cy, outerR, innerR, values, distinctColors, fillOpacity, cr, segmentGap);
@@ -498,28 +508,41 @@ figma.ui.onmessage = async function (msg) {
     }
   }
 
-  // Store params
+  // Persist full chart data so future copy operations can reproduce
+  // the chart exactly (same colors).
+  var chartParams = {
+    values: values,
+    segmentsCount: segmentsCount,
+    pieStyle: pieStyle,
+    innerRadiusPct: innerRadiusPct,
+    cornerRadius: cornerRadius,
+    segmentGap: segmentGap,
+    showLabels: showLabels,
+    showTotal: showTotal,
+    fillOpacity: fillOpacity,
+    colors: distinctColors
+  };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
 
   // Insert
   if (reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (replaceMode && target) {
     target.appendChild(container);
     container.x = oldX; container.y = oldY;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (target) {
     target.appendChild(container);
     container.x = 0; container.y = 0;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify('Chart added to "' + target.name + '"');
+    figma.notify(exactData ? 'Exact copy pasted to "' + target.name + '"' : 'Chart added to "' + target.name + '"');
   } else {
     figma.currentPage.appendChild(container);
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Pie chart created!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Pie chart created!");
   }
 
   sendSelection();
-};
+}

@@ -372,33 +372,35 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 800));
     return;
   }
-  if (msg.type !== "generate") return;
+  if (msg.type === "generate") {
+    await renderChart(msg, null);
+    return;
+  }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
 
+async function renderChart(params, exactData) {
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-  var yValues = msg.yValues;
-  var xLabels = msg.xLabels;
-  var linesCount = msg.linesCount;
-  var lineStyle = msg.lineStyle || "smooth";
-  var yUnit = msg.yUnit || "";
-  var topEvent = msg.topEvent || false;
-  var bottomEvent = msg.bottomEvent || false;
-  var replaceMode = msg.replace || false;
+  var yValues = params.yValues;
+  var xLabels = params.xLabels;
+  var linesCount = params.linesCount;
+  var lineStyle = params.lineStyle || "smooth";
+  var yUnit = params.yUnit || "";
+  var topEvent = params.topEvent || false;
+  var bottomEvent = params.bottomEvent || false;
+  // Paste always replaces a chart inside the target frame (if present),
+  // matching the regenerate flow's replace=true semantics.
+  var replaceMode = exactData ? true : (params.replace || false);
 
   if (!yValues || yValues.length < 2) yValues = [0, 50, 100, 150, 200];
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!linesCount || linesCount < 1) linesCount = 2;
   if (linesCount > 20) linesCount = 20;
-
-  var chartParams = {
-    yValues: yValues,
-    yUnit: yUnit,
-    xLabels: xLabels,
-    linesCount: linesCount,
-    lineStyle: lineStyle,
-    topEvent: topEvent,
-    bottomEvent: bottomEvent
-  };
 
   var yMin = Math.min.apply(null, yValues);
   var yMax = Math.max.apply(null, yValues);
@@ -416,7 +418,6 @@ figma.ui.onmessage = async function (msg) {
     var existingChart = findChartFrame(target);
     if (existingChart) {
       if (existingChart.id === target.id) {
-        // Selected frame IS the chart — clear children, reuse frame
         w = target.width;
         h = target.height;
         var kids = [];
@@ -425,7 +426,6 @@ figma.ui.onmessage = async function (msg) {
         container = target;
         reuseContainer = true;
       } else {
-        // Chart is a child — remove it, create new one
         w = target.width;
         h = target.height;
         oldX = existingChart.x;
@@ -445,33 +445,53 @@ figma.ui.onmessage = async function (msg) {
     container.clipsContent = true;
   }
 
-  // Generate random data for each line
   var pointCount = xLabels.length;
   var peakMultiplier = (lineStyle === "peak") ? 10 : 1;
   var dataPointCount = (pointCount - 1) * peakMultiplier + 1;
 
-  var allSeries = [];
-  for (var li = 0; li < linesCount; li++) {
-    var vals = [];
-    if (lineStyle === "peak") {
-      var baseLevel = yMin + (yMax - yMin) * 0.05;
-      for (var pi = 0; pi < dataPointCount; pi++) {
-        var spike = Math.random() < 0.15;
-        if (spike) {
+  // Reuse exact line data if provided, else generate randomly
+  var allSeries;
+  if (exactData && exactData.allSeries && exactData.allSeries.length === linesCount) {
+    allSeries = exactData.allSeries;
+  } else {
+    allSeries = [];
+    for (var li = 0; li < linesCount; li++) {
+      var vals = [];
+      if (lineStyle === "peak") {
+        var baseLevel = yMin + (yMax - yMin) * 0.05;
+        for (var pi = 0; pi < dataPointCount; pi++) {
+          var spike = Math.random() < 0.15;
+          if (spike) {
+            vals.push(yMin + Math.random() * (yMax - yMin));
+          } else {
+            vals.push(baseLevel + Math.random() * (yMax - yMin) * 0.1);
+          }
+        }
+      } else {
+        for (var pi = 0; pi < pointCount; pi++) {
           vals.push(yMin + Math.random() * (yMax - yMin));
-        } else {
-          vals.push(baseLevel + Math.random() * (yMax - yMin) * 0.1);
         }
       }
-    } else {
-      for (var pi = 0; pi < pointCount; pi++) {
-        vals.push(yMin + Math.random() * (yMax - yMin));
-      }
+      allSeries.push(vals);
     }
-    allSeries.push(vals);
   }
 
-  // Measure widest Y label to calculate left padding
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === linesCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(linesCount);
+  }
+
+  var topEventSegments = null;
+  var bottomEventSegments = null;
+  if (topEvent) {
+    topEventSegments = (exactData && exactData.topEventSegments) ? exactData.topEventSegments : buildEventSegments("top");
+  }
+  if (bottomEvent) {
+    bottomEventSegments = (exactData && exactData.bottomEventSegments) ? exactData.bottomEventSegments : buildEventSegments("bottom");
+  }
+
   var maxLabelWidth = 0;
   for (var mi = 0; mi < yValues.length; mi++) {
     var measure = figma.createText();
@@ -490,15 +510,11 @@ figma.ui.onmessage = async function (msg) {
     h: h - PAD_TOP - PAD_BOTTOM
   };
 
-  // Draw chart elements and collect nodes for grouping
   var gridNodes = drawGrid(container, plot, yValues, xLabels);
   var yLabelNodes = drawYLabels(container, plot, yValues, yMin, yMax, yUnit);
   var xLabelNodes = drawXLabels(container, plot, xLabels);
-
-  var distinctColors = selectDistinctColors(linesCount);
   var lineNodes = drawLines(container, plot, allSeries, yMin, yMax, lineStyle, distinctColors);
 
-  // Group nodes
   if (gridNodes.length > 1) {
     var gridGroup = figma.group(gridNodes, container);
     gridGroup.name = "Grid";
@@ -516,51 +532,64 @@ figma.ui.onmessage = async function (msg) {
     linesGroup.name = "Lines";
   } else if (lineNodes.length === 1) {
     lineNodes[0].name = "Lines";
-    container.appendChild(lineNodes[0]); // move to top z-order
+    container.appendChild(lineNodes[0]);
   }
 
-  if (topEvent) {
-    var topEventNodes = drawEventBar(container, plot, "top", xLabels.length);
+  if (topEvent && topEventSegments) {
+    var topEventNodes = drawEventSegments(container, plot, "top", topEventSegments);
     if (topEventNodes.length > 1) {
       var topEventGroup = figma.group(topEventNodes, container);
       topEventGroup.name = "Top Events";
     }
   }
-  if (bottomEvent) {
-    var bottomEventNodes = drawEventBar(container, plot, "bottom", xLabels.length);
+  if (bottomEvent && bottomEventSegments) {
+    var bottomEventNodes = drawEventSegments(container, plot, "bottom", bottomEventSegments);
     if (bottomEventNodes.length > 1) {
       var bottomEventGroup = figma.group(bottomEventNodes, container);
       bottomEventGroup.name = "Bottom Events";
     }
   }
 
-  // Store chart parameters for re-generation
+  // Persist full chart data so future copy operations can reproduce
+  // the chart exactly (same series, colors, event segments).
+  var chartParams = {
+    yValues: yValues,
+    yUnit: yUnit,
+    xLabels: xLabels,
+    linesCount: linesCount,
+    lineStyle: lineStyle,
+    topEvent: topEvent,
+    bottomEvent: bottomEvent,
+    allSeries: allSeries,
+    colors: distinctColors,
+    topEventSegments: topEventSegments,
+    bottomEventSegments: bottomEventSegments
+  };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
 
-  // Insert
   if (reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (replaceMode && target) {
     target.appendChild(container);
     container.x = oldX;
     container.y = oldY;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (target) {
     target.appendChild(container);
     container.x = 0;
     container.y = 0;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify('Chart added to "' + target.name + '"');
+    figma.notify(exactData ? 'Exact copy pasted to "' + target.name + '"' : 'Chart added to "' + target.name + '"');
   } else {
     figma.currentPage.appendChild(container);
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Line chart created!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Line chart created!");
   }
 
   sendSelection();
-};
+}
 
 // ─── Grid ───────────────────────────────────────────────────
 function drawGrid(parent, p, yValues, xLabels) {
@@ -743,46 +772,47 @@ var BOTTOM_EVENT_COLORS = [
 
 var BAR_HEIGHT = 6;
 
-function drawEventBar(parent, p, position, pointCount) {
-  var nodes = [];
-  var y;
-  if (position === "top") {
-    y = p.y - BAR_HEIGHT - 2;
-  } else {
-    y = p.y + p.h + 1;
-  }
+function buildEventSegments(position) {
+  // Segments use x and w as fractions of plot width (0..1) so the layout
+  // is identical when re-rendered into a differently-sized frame.
+  var segments = [];
+  var segMinW = 0.02;
+  var segMaxW = 0.08;
+  var gapMinW = 0.005;
+  var gapMaxW = 0.04;
+  var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
 
-  var totalW = p.w;
-  var segMinW = totalW * 0.02;
-  var segMaxW = totalW * 0.08;
-  var gapMinW = totalW * 0.005;
-  var gapMaxW = totalW * 0.04;
-
-  var x = p.x;
-  var endX = p.x + totalW;
-
-  while (x < endX) {
+  var x = 0;
+  while (x < 1) {
     var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
     x += gap;
-    if (x >= endX) break;
+    if (x >= 1) break;
 
     var segW = segMinW + Math.random() * (segMaxW - segMinW);
-    if (x + segW > endX) segW = endX - x;
-    if (segW < 1) break;
+    if (x + segW > 1) segW = 1 - x;
+    if (segW < 0.001) break;
 
-    var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
     var color = palette[Math.floor(Math.random() * palette.length)];
     var opacity = 0.4 + Math.random() * 0.6;
 
+    segments.push({ x: x, w: segW, color: color, opacity: opacity });
+    x += segW;
+  }
+  return segments;
+}
+
+function drawEventSegments(parent, p, position, segments) {
+  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
+  var nodes = [];
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
     var rect = figma.createRectangle();
-    rect.x = x;
+    rect.x = p.x + s.x * p.w;
     rect.y = y;
-    rect.resize(segW, BAR_HEIGHT);
-    rect.fills = [{ type: "SOLID", color: color, opacity: opacity }];
+    rect.resize(s.w * p.w, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: s.color, opacity: s.opacity }];
     parent.appendChild(rect);
     nodes.push(rect);
-
-    x += segW;
   }
   return nodes;
 }

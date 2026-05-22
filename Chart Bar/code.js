@@ -363,35 +363,35 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 900));
     return;
   }
-  if (msg.type !== "generate") return;
+  if (msg.type === "generate") { await renderChart(msg, null); return; }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
 
+async function renderChart(params, exactData) {
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-  var yValues = msg.yValues;
-  var xLabels = msg.xLabels;
-  var barsCount = msg.barsCount;
-  var orientation = msg.orientation || "vertical";
-  var barMode = msg.barMode || "normal";
-  var dense = msg.dense || false;
-  var barGap = (msg.barGap !== undefined) ? msg.barGap : 1;
-  var fillOpacity = (msg.fillOpacity !== undefined) ? msg.fillOpacity : 1;
+  var yValues = params.yValues;
+  var xLabels = params.xLabels;
+  var barsCount = params.barsCount;
+  var orientation = params.orientation || "vertical";
+  var barMode = params.barMode || "normal";
+  var dense = params.dense || false;
+  var barGap = (params.barGap !== undefined) ? params.barGap : 1;
+  var fillOpacity = (params.fillOpacity !== undefined) ? params.fillOpacity : 1;
   fillOpacity = Math.max(0.05, Math.min(1, fillOpacity));
-  var yUnit = msg.yUnit || "";
-  var topEvent = msg.topEvent || false;
-  var bottomEvent = msg.bottomEvent || false;
-  var replaceMode = msg.replace || false;
+  var yUnit = params.yUnit || "";
+  var topEvent = params.topEvent || false;
+  var bottomEvent = params.bottomEvent || false;
+  var replaceMode = exactData ? true : (params.replace || false);
 
   if (!yValues || yValues.length < 2) yValues = [0, 50, 100, 150, 200];
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!barsCount || barsCount < 1) barsCount = 2;
   if (barsCount > 20) barsCount = 20;
-
-  var chartParams = {
-    yValues: yValues, yUnit: yUnit, xLabels: xLabels,
-    barsCount: barsCount, orientation: orientation, barMode: barMode,
-    dense: dense, barGap: barGap, fillOpacity: fillOpacity,
-    topEvent: topEvent, bottomEvent: bottomEvent
-  };
 
   var yMin = Math.min.apply(null, yValues);
   var yMax = Math.max.apply(null, yValues);
@@ -439,20 +439,25 @@ figma.ui.onmessage = async function (msg) {
     dataPointCount = categoriesCount * 10;
   }
 
-  var allSeries = [];
-  for (var li = 0; li < barsCount; li++) {
-    var vals = [];
-    for (var pi = 0; pi < dataPointCount; pi++) {
-      vals.push(yMin + Math.random() * (yMax - yMin));
+  var allSeries;
+  if (exactData && exactData.allSeries && exactData.allSeries.length === barsCount) {
+    allSeries = exactData.allSeries;
+  } else {
+    allSeries = [];
+    for (var li = 0; li < barsCount; li++) {
+      var vals = [];
+      for (var pi = 0; pi < dataPointCount; pi++) {
+        vals.push(yMin + Math.random() * (yMax - yMin));
+      }
+      allSeries.push(vals);
     }
-    allSeries.push(vals);
-  }
 
-  if (barMode === "stacked" && allSeries.length > 1) {
-    var scaleFactor = 1 / barsCount;
-    for (var si = 0; si < allSeries.length; si++) {
-      for (var pi = 0; pi < allSeries[si].length; pi++) {
-        allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
+    if (barMode === "stacked" && allSeries.length > 1) {
+      var scaleFactor = 1 / barsCount;
+      for (var si = 0; si < allSeries.length; si++) {
+        for (var pi = 0; pi < allSeries[si].length; pi++) {
+          allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
+        }
       }
     }
   }
@@ -493,7 +498,21 @@ figma.ui.onmessage = async function (msg) {
     xLabelNodes = drawValueLabelsBottom(container, plot, yValues, yMin, yMax, yUnit);
   }
 
-  var distinctColors = selectDistinctColors(barsCount);
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === barsCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(barsCount);
+  }
+
+  var topEventSegments = null;
+  var bottomEventSegments = null;
+  if (topEvent) {
+    topEventSegments = (exactData && exactData.topEventSegments) ? exactData.topEventSegments : buildEventSegments("top");
+  }
+  if (bottomEvent) {
+    bottomEventSegments = (exactData && exactData.bottomEventSegments) ? exactData.bottomEventSegments : buildEventSegments("bottom");
+  }
 
   var barNodes = drawBars(container, plot, allSeries, yMin, yMax, barMode, orientation, distinctColors, dense, barGap, fillOpacity);
 
@@ -504,38 +523,48 @@ figma.ui.onmessage = async function (msg) {
   if (barNodes.length > 1) { var g = figma.group(barNodes, container); g.name = "Bars"; }
   else if (barNodes.length === 1) { barNodes[0].name = "Bars"; container.appendChild(barNodes[0]); }
 
-  if (topEvent) {
-    var evNodes = drawEventBar(container, plot, "top", xLabels.length);
+  if (topEvent && topEventSegments) {
+    var evNodes = drawEventSegments(container, plot, "top", topEventSegments);
     if (evNodes.length > 1) { var g = figma.group(evNodes, container); g.name = "Top Events"; }
   }
-  if (bottomEvent) {
-    var evNodes = drawEventBar(container, plot, "bottom", xLabels.length);
+  if (bottomEvent && bottomEventSegments) {
+    var evNodes = drawEventSegments(container, plot, "bottom", bottomEventSegments);
     if (evNodes.length > 1) { var g = figma.group(evNodes, container); g.name = "Bottom Events"; }
   }
 
+  var chartParams = {
+    yValues: yValues, yUnit: yUnit, xLabels: xLabels,
+    barsCount: barsCount, orientation: orientation, barMode: barMode,
+    dense: dense, barGap: barGap, fillOpacity: fillOpacity,
+    topEvent: topEvent, bottomEvent: bottomEvent,
+    allSeries: allSeries,
+    colors: distinctColors,
+    topEventSegments: topEventSegments,
+    bottomEventSegments: bottomEventSegments
+  };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
 
   if (reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (replaceMode && target) {
     target.appendChild(container);
     container.x = oldX; container.y = oldY;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (target) {
     target.appendChild(container);
     container.x = 0; container.y = 0;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify('Chart added to "' + target.name + '"');
+    figma.notify(exactData ? 'Exact copy pasted to "' + target.name + '"' : 'Chart added to "' + target.name + '"');
   } else {
     figma.currentPage.appendChild(container);
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Bar chart created!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Bar chart created!");
   }
 
   sendSelection();
-};
+}
 
 // ─── Grid (vertical orientation) ────────────────────────────
 function drawGridVertical(parent, p, yValues, xLabels, dataPointCount) {
@@ -828,28 +857,45 @@ var BOTTOM_EVENT_COLORS = [
 ];
 var BAR_HEIGHT = 6;
 
-function drawEventBar(parent, p, position, pointCount) {
-  var nodes = [];
-  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
-  var totalW = p.w;
-  var x = p.x;
-  var endX = p.x + totalW;
+function buildEventSegments(position) {
+  var segments = [];
+  var segMinW = 0.02;
+  var segMaxW = 0.08;
+  var gapMinW = 0.005;
+  var gapMaxW = 0.04;
+  var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
 
-  while (x < endX) {
-    x += totalW * 0.005 + Math.random() * totalW * 0.035;
-    if (x >= endX) break;
-    var segW = totalW * 0.02 + Math.random() * totalW * 0.06;
-    if (x + segW > endX) segW = endX - x;
-    if (segW < 1) break;
-    var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
+  var x = 0;
+  while (x < 1) {
+    var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
+    x += gap;
+    if (x >= 1) break;
+
+    var segW = segMinW + Math.random() * (segMaxW - segMinW);
+    if (x + segW > 1) segW = 1 - x;
+    if (segW < 0.001) break;
+
     var color = palette[Math.floor(Math.random() * palette.length)];
+    var opacity = 0.4 + Math.random() * 0.6;
+
+    segments.push({ x: x, w: segW, color: color, opacity: opacity });
+    x += segW;
+  }
+  return segments;
+}
+
+function drawEventSegments(parent, p, position, segments) {
+  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
+  var nodes = [];
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
     var rect = figma.createRectangle();
-    rect.x = x; rect.y = y;
-    rect.resize(segW, BAR_HEIGHT);
-    rect.fills = [{ type: "SOLID", color: color, opacity: 0.4 + Math.random() * 0.6 }];
+    rect.x = p.x + s.x * p.w;
+    rect.y = y;
+    rect.resize(s.w * p.w, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: s.color, opacity: s.opacity }];
     parent.appendChild(rect);
     nodes.push(rect);
-    x += segW;
   }
   return nodes;
 }
