@@ -386,6 +386,10 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 900));
     return;
   }
+  if (msg.type === "notify") {
+    figma.notify(msg.message);
+    return;
+  }
   if (msg.type === "generate") {
     await renderChart(msg, null);
     return;

@@ -347,6 +347,8 @@
       copiedChart = JSON.parse(JSON.stringify(storedChartData));
       updateClipboardUI();
       resizeUI();
+      var n = copiedChart.linesCount || 0;
+      parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — ' + n + ' line' + (n === 1 ? '' : 's') + ' ready to paste' } }, '*');
     }
 
     function pasteChart() {
