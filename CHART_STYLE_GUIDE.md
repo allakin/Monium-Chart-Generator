@@ -564,6 +564,556 @@ if (!d.yValues || d.yValues.length < 2) {
 
 ---
 
+## Copy / Paste exact copy (shared pattern for all chart types)
+
+In addition to **re-generation** (which preserves only the *parameters* and re-randomizes the underlying data each time), plugins must support **exact copy** — taking a previously generated chart's full data, including randomized values and colors, and reproducing it pixel-equivalent in another frame (or replacing the same one).
+
+The key difference:
+- **Re-generate**: same parameters → new random data and colors.
+- **Copy + Paste**: same parameters → **same** data, **same** colors, **same** event-bar layout.
+
+The primary use case is building visually-identical chart pairs/grids for side-by-side comparison.
+
+### User Flow
+1. User selects a frame containing a previously generated chart.
+2. Plugin shows both **"Get values from chart"** (existing) and **"Copy chart"** (new) buttons.
+3. User clicks **"Copy chart"** → full chart data is captured to the plugin's in-memory clipboard. A yellow banner appears with a brief summary (e.g. `"Copied: 3 lines · Smooth"`) and an `×` to clear.
+4. User selects another frame (or stays on the same one). The clipboard persists across selection changes.
+5. User clicks **"Paste exact copy"** → identical chart is generated in the target frame, replacing any chart already present there. The clipboard remains, so multiple pastes are supported (one source → many identical copies in different frames).
+
+### Storing Full Chart Data — `setPluginData`
+The chart container's `chartParams` JSON is extended to also store the data needed to reproduce the chart pixel-equivalent:
+```js
+container.setPluginData("chartParams", JSON.stringify({
+  // ... all existing parameters (yValues, xLabels, linesCount/areasCount/..., etc.) ...
+
+  // ── Data needed for exact copy ──
+  allSeries: allSeries,                  // [[v1, v2, ...], ...] random series data (Line/Area/Bar)
+  colors: distinctColors,                // [{r,g,b}, ...] color per series/segment
+  topEventSegments: topEventSegments,    // [{x, w, color: {r,g,b}, opacity}, ...] or null
+  bottomEventSegments: bottomEventSegments,
+
+  // ── Legend (see "Legend" section) — also part of the exact-copy snapshot ──
+  showLegend: showLegend,                // bool — master toggle
+  legendAlign: legendAlign,              // "left" | "center" | "right"
+  legendLabels: legendLabels             // string[] — original user input
+}));
+```
+**Pie Chart**: store `colors` + the legend fields. (Slice `values` are already deterministic in chartParams; no event bars.)
+
+**Legend MUST travel with Copy/Paste.** When the user copies a chart, the pasted clone has to look identical — same legend visibility, same alignment, same labels. Since the three legend fields are part of `chartParams` and Copy/Paste deep-clones `chartParams` via `JSON.parse(JSON.stringify(storedChartData))`, this works automatically as long as the fields are stored. Do NOT add custom omission logic.
+
+### Auto-populate Form After Paste
+After "Paste exact copy" the chart appears in the target frame AND the UI form should auto-populate with the pasted chart's values — same UX as clicking "Get values from chart". The user shouldn't have to click an extra button before they can tweak the parameters.
+
+The mechanism uses a `pendingPasteData` flag in the UI so the next `selection` message coming back from the plugin triggers form population instead of the default "chart detected — enable Regen, disable Insert" path:
+```js
+var pendingPasteData = null;
+
+function pasteChart() {
+  if (!copiedChart) return;
+  parent.postMessage({ pluginMessage: { type: 'paste', chartData: copiedChart } }, '*');
+  pendingPasteData = copiedChart;
+}
+
+// In window.onmessage when a chart is detected:
+if (msg.hasChart && msg.chartData) {
+  storedChartData = msg.chartData;
+  regenBtn.style.display = 'block';
+  copyBtn.style.display = 'block';
+  if (pendingPasteData) {
+    populateFromChartData(msg.chartData); // same helper used by regenerate()
+    pendingPasteData = null;
+  } else {
+    setRegenEnabled(true);
+    setInsertEnabled(false);
+  }
+}
+```
+Refactor the form-population logic out of `regenerate()` into a shared `populateFromChartData(d)` so both code paths use the same code. `populateFromChartData` also sets `replaceMode = true`, enables Insert, and disables Regen — exactly the state a user wants after Get-values OR Paste.
+
+### Event Segments — Normalized 0..1
+Refactor the existing `drawEventBar` function into two: **`buildEventSegments(position)`** generates segment specs with `x` and `w` as **fractions of plot width** (0..1), and **`drawEventSegments(parent, p, position, segments)`** converts fractions to pixels at render time. This is what makes event bars scale proportionally when pasted into a different-sized frame.
+
+```js
+function buildEventSegments(position) {
+  // Segments use x and w as fractions of plot width (0..1) so the layout
+  // is identical when re-rendered into a differently-sized frame.
+  var segments = [];
+  var segMinW = 0.02, segMaxW = 0.08;
+  var gapMinW = 0.005, gapMaxW = 0.04;
+  var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
+  var x = 0;
+  while (x < 1) {
+    var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
+    x += gap;
+    if (x >= 1) break;
+    var segW = segMinW + Math.random() * (segMaxW - segMinW);
+    if (x + segW > 1) segW = 1 - x;
+    if (segW < 0.001) break;
+    var color = palette[Math.floor(Math.random() * palette.length)];
+    var opacity = 0.4 + Math.random() * 0.6;
+    segments.push({ x: x, w: segW, color: color, opacity: opacity });
+    x += segW;
+  }
+  return segments;
+}
+
+function drawEventSegments(parent, p, position, segments) {
+  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
+  var nodes = [];
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
+    var rect = figma.createRectangle();
+    rect.x = p.x + s.x * p.w;
+    rect.y = y;
+    rect.resize(s.w * p.w, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: s.color, opacity: s.opacity }];
+    parent.appendChild(rect);
+    nodes.push(rect);
+  }
+  return nodes;
+}
+```
+
+### Render Function — `renderChart(params, exactData)`
+Extract the chart-build logic from the `generate` handler into a single async function `renderChart(params, exactData)`. When `exactData` is provided, the function reuses the supplied `allSeries`, `colors`, and event segments instead of randomizing. The `generate` and `paste` message handlers both delegate to it.
+
+```js
+async function renderChart(params, exactData) {
+  // ... read params, resolve target, build container as before ...
+  // Force replaceMode=true when exactData is set
+  var replaceMode = exactData ? true : (params.replace || false);
+
+  // Reuse exact series data if provided, else randomize
+  var allSeries;
+  if (exactData && exactData.allSeries && exactData.allSeries.length === seriesCount) {
+    allSeries = exactData.allSeries;
+  } else {
+    allSeries = [];
+    for (var li = 0; li < seriesCount; li++) { /* fill with Math.random()... */ }
+
+    // CRITICAL (Area/Bar with stacked mode): any in-place scaling of allSeries
+    // (e.g. `vals[pi] = yMin + (vals[pi] - yMin) * scaleFactor` for stacked)
+    // MUST live inside this else branch. The stored allSeries is already
+    // post-scaling, so applying it again on paste would double-scale.
+    if (mode === "stacked") { /* scale in place */ }
+  }
+
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === seriesCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(seriesCount);
+  }
+
+  var topEventSegments = topEvent
+    ? (exactData && exactData.topEventSegments ? exactData.topEventSegments : buildEventSegments("top"))
+    : null;
+  var bottomEventSegments = bottomEvent
+    ? (exactData && exactData.bottomEventSegments ? exactData.bottomEventSegments : buildEventSegments("bottom"))
+    : null;
+
+  // ... draw using allSeries / distinctColors / segments; group nodes; setPluginData ...
+
+  // Notify
+  figma.notify(exactData ? "Exact copy pasted!" : (replaceMode ? "Chart regenerated!" : "Chart added to ..."));
+}
+
+figma.ui.onmessage = async function (msg) {
+  if (msg.type === "resize") { /* ... */ return; }
+  if (msg.type === "generate") { await renderChart(msg, null); return; }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
+```
+
+### UI Elements
+
+**CSS** (added alongside `.btn-regen`):
+```css
+.btn-copy {
+  display: none;
+  width: 100%; padding: 9px 0; border: none; border-radius: 8px;
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all 0.15s; background: #EEEEF0; color: #1A1A1A; margin-top: 6px;
+}
+.btn-copy:hover:not(:disabled) { background: #E0E0E0; }
+.btn-copy:active:not(:disabled) { transform: scale(0.97); }
+.btn-copy:disabled { opacity: 0.45; cursor: default; }
+
+.clipboard-box {
+  display: none;
+  background: #FFF6E0; border: 1px solid #F5D78A; border-radius: 6px;
+  padding: 8px 10px; margin-top: 10px;
+}
+.clipboard-box .row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #7A5A0F; }
+.clipboard-box .summary { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clipboard-box .clear-btn {
+  border: none; background: transparent; color: #7A5A0F; cursor: pointer;
+  font-size: 16px; padding: 0 4px; line-height: 1;
+}
+.clipboard-box .clear-btn:hover { color: #1A1A1A; }
+
+.btn-paste {
+  width: 100%; margin-top: 8px; padding: 8px 0; border: none; border-radius: 6px;
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all 0.15s; background: #1A1A1A; color: #fff;
+}
+.btn-paste:hover:not(:disabled) { background: #333; }
+.btn-paste:active:not(:disabled) { transform: scale(0.97); }
+.btn-paste:disabled { opacity: 0.45; cursor: default; }
+```
+
+**HTML** (placed immediately after the existing `regenBtn` + `regenError`):
+```html
+<button class="btn-copy" id="copyBtn" onclick="copyChart()">Copy chart</button>
+<div class="error-msg" id="regenError"></div>
+
+<div class="clipboard-box" id="clipboardBox">
+  <div class="row">
+    <span class="summary" id="clipboardSummary">Chart copied</span>
+    <button class="clear-btn" onclick="clearCopy()" title="Clear clipboard">×</button>
+  </div>
+  <button class="btn-paste" id="pasteBtn" onclick="pasteChart()">Paste exact copy</button>
+</div>
+```
+
+**JS** (added to the existing `<script>` block):
+```js
+var copiedChart = null;
+
+function copyChart() {
+  hideRegenError();
+  if (!storedChartData) return;
+  // Gate: require fields that newer pluginData provides
+  if (!storedChartData.colors || (!storedChartData.allSeries && !storedChartData.values)) {
+    showRegenError('Exact copy unavailable: this chart was generated by an older version. Regenerate it once to enable Copy.');
+    return;
+  }
+  copiedChart = JSON.parse(JSON.stringify(storedChartData));
+  updateClipboardUI();
+  resizeUI();
+}
+
+function pasteChart() {
+  if (!copiedChart) return;
+  parent.postMessage({ pluginMessage: { type: 'paste', chartData: copiedChart } }, '*');
+}
+
+function clearCopy() {
+  copiedChart = null;
+  updateClipboardUI();
+  resizeUI();
+}
+
+function updateClipboardUI() {
+  var box = document.getElementById('clipboardBox');
+  if (copiedChart) {
+    // Adapt summary to chart-specific field names
+    var n = copiedChart.linesCount || copiedChart.areasCount || copiedChart.barsCount || copiedChart.segmentsCount || 0;
+    var style = copiedChart.lineStyle || copiedChart.areaStyle || copiedChart.barMode || copiedChart.pieStyle || '';
+    var label = style ? (style.charAt(0).toUpperCase() + style.slice(1)) : '';
+    var noun = copiedChart.linesCount ? 'line'
+            : copiedChart.areasCount ? 'area'
+            : copiedChart.barsCount ? 'bar series'
+            : 'segment';
+    document.getElementById('clipboardSummary').textContent =
+      'Copied: ' + n + ' ' + noun + (n === 1 ? '' : 's') + (label ? ' · ' + label : '');
+    box.style.display = 'block';
+  } else {
+    box.style.display = 'none';
+  }
+}
+```
+
+In `window.onmessage`, alongside the existing `regenBtn` handling, also show/hide `copyBtn` (same condition as `regenBtn`) and call `updateClipboardUI()` once.
+
+### Pie Chart Specifics
+- **No** `buildEventSegments` / `drawEventSegments` refactor — Pie has no event bars.
+- **No** `allSeries` field — slice `values` are already deterministic in `chartParams`.
+- Store **only** `colors` alongside existing fields.
+- `copyChart()` gating checks `!storedChartData.colors` (instead of `!storedChartData.allSeries`).
+- Clipboard summary reads `segmentsCount` and `pieStyle`.
+
+### Stacked-mode Scaling Pitfall (Area & Bar)
+Both Area (stacked) and Bar (stacked) mutate `allSeries` in-place to scale values so the stack fits within `yMax`. The post-scaling array is what gets stored in `pluginData`. When pasting, scaling MUST NOT be reapplied — keep the scaling block strictly inside the **else** branch of the `if (exactData?.allSeries)` check.
+
+### Notify from UI — `type: "notify"` message
+`figma.notify` is only available in `code.js` (plugin context). When the UI needs to surface a transient toast — e.g. confirming Copy — send a message and have the plugin forward it to `figma.notify`:
+```js
+// code.js — in figma.ui.onmessage, alongside the "resize" handler
+if (msg.type === "notify") {
+  figma.notify(msg.message);
+  return;
+}
+```
+```js
+// ui.html — inside copyChart(), after a successful copy
+parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — 3 lines ready to paste' } }, '*');
+```
+The summary text is chart-specific (lines / areas / bar series / segments) and adopts the same chart-type wording used in `updateClipboardUI`.
+
+### Backward Compatibility
+Charts generated before this change have `pluginData` without `allSeries` / `colors`. The Copy button shows an inline error guiding the user: *"Exact copy unavailable: this chart was generated by an older version. Regenerate it once to enable Copy."* The clipboard remains usable across plugin runs for newer charts. The clipboard is in-memory only — it does not persist across plugin restarts.
+
+---
+
+## Legend (shared pattern for axis-based and Pie charts)
+
+A legend block below the X-axis labels (or below the chart for Pie) showing one item per series: a colored marker + label text. The marker color must exactly match the corresponding series' stroke/fill color so the user can read the chart. Implemented first in Chart Line — adapt to other chart types using the marker variants below.
+
+### User Flow
+1. User toggles **"Show legend"** checkbox to enable/disable the legend.
+2. With legend on, user enters labels comma-separated in **"Legend labels"** (a textarea — grows in height as text is added).
+3. User picks **"Legend align"** — Left (default) / Center / Right.
+4. If labels overflow the available width, items wrap to new rows automatically. If wrapping produces more than 3 rows, a paginator `▲ N/M ▼` appears below — purely visual, since plugins render static nodes (the user can't click the arrows).
+
+### Marker Variants
+
+| Chart type | Marker geometry | Notes |
+|---|---|---|
+| Chart Line | Rectangle `14 × 2px`, `cornerRadius: 1` | Filled with series color — mimics a short line segment |
+| Chart Area / Chart Bar / Chart Pie | Circle `8 × 8px` (`figma.createEllipse()`) | Filled with series/segment color; same fill opacity as the corresponding chart element when applicable |
+
+For non-Line charts the row layout numbers change slightly: replace `LEGEND_LINE_W = 14, LEGEND_LINE_H = 2` with a single `LEGEND_DOT_SIZE = 8`. Per-item width becomes `LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + textWidth`. The marker is vertically centered on the text line: for an 8px circle on a 14px-tall row, `markerY = rowY + (LEGEND_ROW_H - LEGEND_DOT_SIZE) / 2` (i.e. `rowY + 3`).
+
+### Layout Constants
+```js
+var LEGEND_LINE_W = 14;        // Line chart only
+var LEGEND_LINE_H = 2;         // Line chart only
+var LEGEND_DOT_SIZE = 8;       // Area/Bar/Pie
+var LEGEND_LINE_TEXT_GAP = 6;  // gap between marker and label text
+var LEGEND_ITEM_GAP = 12;      // gap between items in a row
+var LEGEND_ROW_H = 14;         // row height (matches 11px Inter line box)
+var LEGEND_ROW_GAP = 2;        // gap between rows
+var LEGEND_MAX_ROWS_PER_PAGE = 3;
+```
+
+### Horizontal Extent
+The legend MUST be horizontally bounded by the **plot area** (the Y-axis grid range), NOT the full frame width:
+```js
+var legendLeftBound = padLeft;             // where Y-axis grid starts
+var legendWidth = w - padLeft - PAD_RIGHT; // matches plot.w
+```
+Items wrap when they would exceed `legendWidth`. This prevents long labels from spilling into the Y-label gutter or past the chart's right edge.
+
+For Pie Chart there are no axis labels, so use the same bounds derived from chart container size: `legendLeftBound = LEGEND_SIDE_MARGIN` (e.g., 16px) and `legendWidth = w - LEGEND_SIDE_MARGIN * 2`. Or keep margins symmetric with the pie itself.
+
+### Vertical Layout
+The legend block reserves height below the chart:
+```js
+var legendBlockH = legendVisibleRows * LEGEND_ROW_H + Math.max(0, legendVisibleRows - 1) * LEGEND_ROW_GAP;
+if (legendPaginated) legendBlockH += 4 + 14; // 4px gap + paginator height
+var legendExtraBottom = (legendBlockH > 0) ? (legendBlockH + 8) : 0; // +8px gap from X labels
+plot.h = h - PAD_TOP - PAD_BOTTOM - legendExtraBottom;
+var legendY = plot.y + plot.h + PAD_BOTTOM + 5; // top of first legend row
+```
+The bottom of the legend block sits **3px** above the bottom edge of the frame.
+
+### Label Truncation
+Long labels are truncated with `…` (single ellipsis char) so they never overflow. Use binary search to find the longest prefix whose width with `…` appended fits within `maxTextWidth`:
+```js
+function measureLegendItems(labels, maxTextWidth) {
+  var texts = [], widths = [];
+  for (var i = 0; i < labels.length; i++) {
+    var label = labels[i] || " ";
+    var t = figma.createText();
+    t.fontName = { family: "Inter", style: "Regular" };
+    t.fontSize = 11;
+    t.characters = label;
+    if (t.width <= maxTextWidth) {
+      widths.push(t.width); texts.push(label); t.remove(); continue;
+    }
+    var lo = 0, hi = label.length;
+    while (lo < hi) {
+      var mid = Math.floor((lo + hi + 1) / 2);
+      t.characters = label.substring(0, mid) + "…";
+      if (t.width <= maxTextWidth) lo = mid; else hi = mid - 1;
+    }
+    var truncated = label.substring(0, lo) + "…";
+    t.characters = truncated;
+    widths.push(t.width); texts.push(truncated); t.remove();
+  }
+  return { texts: texts, widths: widths };
+}
+```
+`maxTextWidth = legendWidth - markerWidth - LEGEND_LINE_TEXT_GAP` (so a single item still fits on its own row). Store the **original** (un-truncated) labels in `pluginData.legendLabels` so "Get values from chart" shows the user their original input.
+
+### Greedy Row Packing
+```js
+function packLegendRows(widths, availableWidth) {
+  var rows = [], current = [], currentW = 0;
+  for (var i = 0; i < widths.length; i++) {
+    var itemW = markerWidth + LEGEND_LINE_TEXT_GAP + widths[i];
+    if (current.length === 0) { current.push(i); currentW = itemW; }
+    else {
+      var withGap = currentW + LEGEND_ITEM_GAP + itemW;
+      if (withGap > availableWidth) { rows.push(current); current = [i]; currentW = itemW; }
+      else { current.push(i); currentW = withGap; }
+    }
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+```
+
+### Alignment
+Per row, compute `rowStartX`:
+- `left` → `legendLeftBound`
+- `center` → `legendLeftBound + (legendWidth - rowTotalW) / 2`
+- `right` → `legendLeftBound + legendWidth - rowTotalW`
+
+The paginator uses the **same** alignment.
+
+### Pagination — Visual Only
+When `rows.length > LEGEND_MAX_ROWS_PER_PAGE` (3), only page 1 is rendered (top 3 rows). Below the rows, draw a paginator: `▲` (up triangle, `10×8px`) + `N/M` text + `▼` (down triangle).
+
+Colors:
+- Active arrow (page can advance in that direction): `{ r: 0.078, g: 0.176, b: 0.435 }` — dark navy `#14306F`
+- Disabled arrow (edge): `{ r: 0.737, g: 0.769, b: 0.812 }` — light gray `#BCC4CF`
+- Text `N/M`: `COLOR_AXIS` with `AXIS_OPACITY` (same as X labels)
+
+Page is always rendered as `1` since static Figma nodes can't be clicked. The paginator is a status indicator that "more rows exist beyond what's shown".
+
+### Text Color
+Legend label text uses the same color/opacity as X-axis labels:
+```js
+t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }]; // black @ 50%
+```
+
+### Persistence — `chartParams`
+Save in `pluginData`:
+```js
+{
+  // ... other chart params ...
+  showLegend: showLegend,         // bool — master toggle
+  legendAlign: legendAlign,       // "left" | "center" | "right"
+  legendLabels: legendLabels      // string[] — original user input (un-truncated, post-pad/truncate to linesCount)
+}
+```
+Backward compat: if `showLegend` is undefined on an older chart, derive from `legendLabels.length > 0`.
+
+These three fields are also part of the **Copy / Paste exact copy** snapshot (see that section). A pasted chart must reproduce the source's legend exactly — visibility, alignment, and labels — which works automatically because Copy/Paste deep-clones the whole `chartParams` object. No extra wiring needed beyond saving the fields here.
+
+### UI Elements
+
+**HTML** (inserted after the "Lines/Areas/Bars/Segments count" field):
+```html
+<div class="field">
+  <label>Legend</label>
+  <div class="checkbox-group">
+    <label class="checkbox-row">
+      <input type="checkbox" id="showLegendCheck"> Show legend
+    </label>
+  </div>
+</div>
+
+<div class="field" id="legendLabelsField" style="display: none;">
+  <label>Legend labels (comma-separated; missing entries auto-named "Series N")</label>
+  <textarea id="legendInput" rows="1" placeholder="e.g. AutocompleteKeys, GenerateYQL, SearchLogs"></textarea>
+</div>
+
+<div class="field" id="legendAlignField" style="display: none;">
+  <label>Legend align</label>
+  <div class="radio-group" id="legendAlignGroup">
+    <label class="radio-option active" data-value="left"><input type="radio" name="legendAlign" value="left" checked> Left</label>
+    <label class="radio-option" data-value="center"><input type="radio" name="legendAlign" value="center"> Center</label>
+    <label class="radio-option" data-value="right"><input type="radio" name="legendAlign" value="right"> Right</label>
+  </div>
+</div>
+```
+
+**CSS** — extend `.field input` selector to also style `.field textarea` (resize disabled, overflow hidden, line-height 1.4) so textareas look identical to inputs.
+
+**Auto-resizing textareas**: any field where the user enters comma-separated values (`yInput`, `xInput`, `legendInput`) should be a `<textarea rows="1">` with this resizer:
+```js
+function autoResize(el) {
+  if (!el || el.offsetParent === null) return; // hidden — scrollHeight is unreliable
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+['yInput', 'xInput', 'legendInput'].forEach(function (id) {
+  var el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('input', function () { autoResize(el); });
+    autoResize(el); // initial fit
+  }
+});
+```
+Also call `autoResize(el)` after the value is programmatically set (in `regenerate()`).
+
+### Scoped Radio Groups
+If the page has multiple radio groups (Line style + Legend align, etc.), the radio handler must scope by parent group ID, otherwise selecting one option in one group will deactivate the active option in the other:
+```js
+function bindRadioGroup(groupId) {
+  document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function (opt) {
+    opt.addEventListener('click', function () {
+      document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function (o) { o.classList.remove('active'); });
+      opt.classList.add('active');
+      opt.querySelector('input').checked = true;
+    });
+  });
+}
+bindRadioGroup('styleGroup');
+bindRadioGroup('legendAlignGroup');
+```
+
+### Sync with Series Count Field
+When the user changes the series count (Lines/Areas/Bars/Segments — `linesInput`, `areasInput`, etc.), the legend labels textarea should auto-sync:
+- **Increase**: append `"Series N"` defaults at the tail for new positions — preserve all existing entries (whether user-typed or default).
+- **Decrease**: truncate the tail (`labels.slice(0, newCount)`). Even custom user values past `newCount` are removed by design.
+- **No-op** if `showLegend` is off.
+
+CRITICAL: bind to the `change` event (commit), NOT `input`. With `input`, typing "15" digit-by-digit would first fire with value "1" — truncating to 1 entry — and then "15" extends. The intermediate truncation destroys user labels. `change` fires after blur, Enter, or spinner-click — committed values only.
+
+```js
+function syncLegendLabelsToLinesCount() {
+  if (!document.getElementById('showLegendCheck').checked) return;
+  var newCount = Math.max(1, Math.min(20, parseInt(document.getElementById('linesInput').value) || 1));
+  var legendEl = document.getElementById('legendInput');
+  var labels = legendEl.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+  if (newCount > labels.length) {
+    for (var i = labels.length; i < newCount; i++) labels.push('Series ' + (i + 1));
+  } else if (newCount < labels.length) {
+    labels = labels.slice(0, newCount);
+  }
+  legendEl.value = labels.join(', ');
+  autoResize(legendEl);
+}
+document.getElementById('linesInput').addEventListener('change', syncLegendLabelsToLinesCount);
+```
+
+### Toggle Visibility
+When the user toggles `showLegendCheck`, show/hide `legendLabelsField` and `legendAlignField`. Re-run `autoResize` on the legend textarea when it becomes visible (otherwise `scrollHeight` was 0 while hidden).
+
+### Pre-fill on Legend Enable
+When the user **turns the checkbox ON**, immediately run the same `syncLegendLabelsToCount()` function used by the series-count listener. This populates the labels textarea with `"Series N"` defaults for the current series count, so the user sees a sensible starting point instead of an empty field. Existing labels (typed earlier or restored via "Get values from chart") are **preserved** — sync only appends missing entries at the tail or truncates extras.
+
+```js
+document.getElementById('showLegendCheck').addEventListener('change', function () {
+  updateLegendFieldsVisibility();
+  syncLegendLabelsToCount(); // pre-fill defaults when enabling
+  resizeUI();
+});
+```
+
+The same `syncLegendLabelsToCount()` guards on `showLegendCheck.checked`, so toggling OFF is a safe no-op for the sync — it just hides the fields. Toggling back ON re-pre-fills if the field is still empty (or pads to count if partially populated).
+
+### Pie Chart Specifics
+- No event bars, no `padLeft` / `PAD_RIGHT` to anchor against → use `legendLeftBound = 16, legendWidth = w - 32`.
+- `seriesCount = segmentsCount`. The sync field is the segments count input.
+- Marker = 8×8 circle (per the table above).
+- Otherwise identical: same `pluginData` fields, same paginator, same alignment.
+
+### Group Naming
+After drawing all legend nodes, group them with `figma.group(...)` and name `"Legend"` (consistent with `"Grid"`, `"Y Labels"`, etc.). Required for the layer-structure fallback parser.
+
+---
+
 ## Figma Plugin Code Patterns
 
 ### Selection Tracking

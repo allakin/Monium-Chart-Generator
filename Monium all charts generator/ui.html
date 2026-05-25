@@ -80,10 +80,43 @@
     .btn-regen:active:not(:disabled) { transform: scale(0.97); }
     .btn-regen:disabled { opacity: 0.45; cursor: default; }
 
+    .btn-copy {
+      display: none;
+      width: 100%; padding: 9px 0; border: none; border-radius: 8px;
+      font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s; background: #EEEEF0; color: #1A1A1A; margin-top: 6px;
+    }
+    .btn-copy:hover:not(:disabled) { background: #E0E0E0; }
+    .btn-copy:active:not(:disabled) { transform: scale(0.97); }
+    .btn-copy:disabled { opacity: 0.45; cursor: default; }
+
+    .clipboard-box {
+      display: none;
+      background: #FFF6E0; border: 1px solid #F5D78A; border-radius: 6px;
+      padding: 8px 10px; margin-top: 10px;
+    }
+    .clipboard-box .row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #7A5A0F; }
+    .clipboard-box .summary { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .clipboard-box .clear-btn {
+      border: none; background: transparent; color: #7A5A0F; cursor: pointer;
+      font-size: 16px; padding: 0 4px; line-height: 1;
+    }
+    .clipboard-box .clear-btn:hover { color: #1A1A1A; }
+
+    .btn-paste {
+      width: 100%; margin-top: 8px; padding: 8px 0; border: none; border-radius: 6px;
+      font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: all 0.15s; background: #1A1A1A; color: #fff;
+    }
+    .btn-paste:hover:not(:disabled) { background: #333; }
+    .btn-paste:active:not(:disabled) { transform: scale(0.97); }
+    .btn-paste:disabled { opacity: 0.45; cursor: default; }
+
     .field { margin-top: 16px; }
     .field label { display: block; font-size: 11px; color: #808080; margin-bottom: 4px; }
     .field input[type="text"],
-    .field input[type="number"] {
+    .field input[type="number"],
+    .field textarea {
       width: 100%;
       padding: 7px 10px;
       border: 1.5px solid #E0E0E0;
@@ -94,8 +127,16 @@
       outline: none;
       transition: border-color 0.15s;
     }
-    .field input:focus { border-color: #4D7CFE; }
-    .field input::placeholder { color: #AAAAAA; }
+    .field textarea {
+      resize: none;
+      overflow: hidden;
+      line-height: 1.4;
+      display: block;
+    }
+    .field input:focus,
+    .field textarea:focus { border-color: #4D7CFE; }
+    .field input::placeholder,
+    .field textarea::placeholder { color: #AAAAAA; }
 
     .radio-group { display: flex; gap: 6px; }
     .radio-option {
@@ -162,7 +203,16 @@
   </div>
 
   <button class="btn-regen" id="regenBtn" onclick="regenerate()">Get values from chart</button>
+  <button class="btn-copy" id="copyBtn" onclick="copyChart()">Copy chart</button>
   <div class="error-msg" id="regenError"></div>
+
+  <div class="clipboard-box" id="clipboardBox">
+    <div class="row">
+      <span class="summary" id="clipboardSummary">Chart copied</span>
+      <button class="clear-btn" onclick="clearCopy()" title="Clear clipboard">×</button>
+    </div>
+    <button class="btn-paste" id="pasteBtn" onclick="pasteChart()">Paste exact copy</button>
+  </div>
 
   <!-- ═══════════════════════════════════════════════ -->
   <!--  TAB: LINE                                      -->
@@ -170,7 +220,7 @@
   <div class="tab-panel active" id="panel-line">
     <div class="field">
       <label>Y axis — values (comma-separated)</label>
-      <input type="text" id="line-yInput" value="0, 50, 100, 150, 200">
+      <textarea id="line-yInput" rows="1">0, 50, 100, 150, 200</textarea>
     </div>
     <div class="field">
       <label>Y axis — unit</label>
@@ -178,11 +228,29 @@
     </div>
     <div class="field">
       <label>X axis — labels (comma-separated)</label>
-      <input type="text" id="line-xInput" value="Jan, Feb, Mar, Apr, May, Jun">
+      <textarea id="line-xInput" rows="1">Jan, Feb, Mar, Apr, May, Jun</textarea>
     </div>
     <div class="field">
       <label>Lines count (1-20)</label>
       <input type="number" id="line-countInput" value="2" min="1" max="20">
+    </div>
+    <div class="field">
+      <label>Legend</label>
+      <div class="checkbox-group">
+        <label class="checkbox-row"><input type="checkbox" id="line-showLegendCheck"> Show legend</label>
+      </div>
+    </div>
+    <div class="field" id="line-legendLabelsField" style="display: none;">
+      <label>Legend labels (comma-separated; missing entries auto-named "Series N")</label>
+      <textarea id="line-legendInput" rows="1" placeholder="e.g. AutocompleteKeys, GenerateYQL, SearchLogs"></textarea>
+    </div>
+    <div class="field" id="line-legendAlignField" style="display: none;">
+      <label>Legend align</label>
+      <div class="radio-group" id="line-legendAlignGroup">
+        <label class="radio-option active" data-value="left"><input type="radio" name="line-legendAlign" value="left" checked> Left</label>
+        <label class="radio-option" data-value="center"><input type="radio" name="line-legendAlign" value="center"> Center</label>
+        <label class="radio-option" data-value="right"><input type="radio" name="line-legendAlign" value="right"> Right</label>
+      </div>
     </div>
     <div class="field">
       <label>Line style</label>
@@ -213,7 +281,7 @@
   <div class="tab-panel" id="panel-area">
     <div class="field">
       <label>Y axis — values (comma-separated)</label>
-      <input type="text" id="area-yInput" value="0, 50, 100, 150, 200">
+      <textarea id="area-yInput" rows="1">0, 50, 100, 150, 200</textarea>
     </div>
     <div class="field">
       <label>Y axis — unit</label>
@@ -221,11 +289,29 @@
     </div>
     <div class="field">
       <label>X axis — labels (comma-separated)</label>
-      <input type="text" id="area-xInput" value="Jan, Feb, Mar, Apr, May, Jun">
+      <textarea id="area-xInput" rows="1">Jan, Feb, Mar, Apr, May, Jun</textarea>
     </div>
     <div class="field">
       <label>Areas count (1-20)</label>
       <input type="number" id="area-countInput" value="3" min="1" max="20">
+    </div>
+    <div class="field">
+      <label>Legend</label>
+      <div class="checkbox-group">
+        <label class="checkbox-row"><input type="checkbox" id="area-showLegendCheck"> Show legend</label>
+      </div>
+    </div>
+    <div class="field" id="area-legendLabelsField" style="display: none;">
+      <label>Legend labels (comma-separated; missing entries auto-named "Series N")</label>
+      <textarea id="area-legendInput" rows="1" placeholder="e.g. AutocompleteKeys, GenerateYQL, SearchLogs"></textarea>
+    </div>
+    <div class="field" id="area-legendAlignField" style="display: none;">
+      <label>Legend align</label>
+      <div class="radio-group" id="area-legendAlignGroup">
+        <label class="radio-option active" data-value="left"><input type="radio" name="area-legendAlign" value="left" checked> Left</label>
+        <label class="radio-option" data-value="center"><input type="radio" name="area-legendAlign" value="center"> Center</label>
+        <label class="radio-option" data-value="right"><input type="radio" name="area-legendAlign" value="right"> Right</label>
+      </div>
     </div>
     <div class="field">
       <label>Area style</label>
@@ -278,7 +364,7 @@
   <div class="tab-panel" id="panel-bar">
     <div class="field">
       <label>Y axis — values (comma-separated)</label>
-      <input type="text" id="bar-yInput" value="0, 50, 100, 150, 200">
+      <textarea id="bar-yInput" rows="1">0, 50, 100, 150, 200</textarea>
     </div>
     <div class="field">
       <label>Y axis — unit</label>
@@ -286,11 +372,29 @@
     </div>
     <div class="field">
       <label>X axis — labels (comma-separated)</label>
-      <input type="text" id="bar-xInput" value="Jan, Feb, Mar, Apr, May, Jun">
+      <textarea id="bar-xInput" rows="1">Jan, Feb, Mar, Apr, May, Jun</textarea>
     </div>
     <div class="field">
       <label>Series count (1-20)</label>
       <input type="number" id="bar-countInput" value="3" min="1" max="20">
+    </div>
+    <div class="field">
+      <label>Legend</label>
+      <div class="checkbox-group">
+        <label class="checkbox-row"><input type="checkbox" id="bar-showLegendCheck"> Show legend</label>
+      </div>
+    </div>
+    <div class="field" id="bar-legendLabelsField" style="display: none;">
+      <label>Legend labels (comma-separated; missing entries auto-named "Series N")</label>
+      <textarea id="bar-legendInput" rows="1" placeholder="e.g. AutocompleteKeys, GenerateYQL, SearchLogs"></textarea>
+    </div>
+    <div class="field" id="bar-legendAlignField" style="display: none;">
+      <label>Legend align</label>
+      <div class="radio-group" id="bar-legendAlignGroup">
+        <label class="radio-option active" data-value="left"><input type="radio" name="bar-legendAlign" value="left" checked> Left</label>
+        <label class="radio-option" data-value="center"><input type="radio" name="bar-legendAlign" value="center"> Center</label>
+        <label class="radio-option" data-value="right"><input type="radio" name="bar-legendAlign" value="right"> Right</label>
+      </div>
     </div>
     <div class="field">
       <label>Orientation</label>
@@ -345,11 +449,29 @@
   <div class="tab-panel" id="panel-pie">
     <div class="field">
       <label>Values (comma-separated, leave empty for random)</label>
-      <input type="text" id="pie-valuesInput" placeholder="e.g. 660, 150, 142, 122, 5, 15" value="">
+      <textarea id="pie-valuesInput" rows="1" placeholder="e.g. 660, 150, 142, 122, 5, 15"></textarea>
     </div>
     <div class="field" id="pie-segmentsRow">
       <label>Segments count (1-20)</label>
       <input type="number" id="pie-segmentsInput" value="5" min="1" max="20">
+    </div>
+    <div class="field">
+      <label>Legend</label>
+      <div class="checkbox-group">
+        <label class="checkbox-row"><input type="checkbox" id="pie-showLegendCheck"> Show legend</label>
+      </div>
+    </div>
+    <div class="field" id="pie-legendLabelsField" style="display: none;">
+      <label>Legend labels (comma-separated; missing entries auto-named "Series N")</label>
+      <textarea id="pie-legendInput" rows="1" placeholder="e.g. AutocompleteKeys, GenerateYQL, SearchLogs"></textarea>
+    </div>
+    <div class="field" id="pie-legendAlignField" style="display: none;">
+      <label>Legend align</label>
+      <div class="radio-group" id="pie-legendAlignGroup">
+        <label class="radio-option active" data-value="left"><input type="radio" name="pie-legendAlign" value="left" checked> Left</label>
+        <label class="radio-option" data-value="center"><input type="radio" name="pie-legendAlign" value="center"> Center</label>
+        <label class="radio-option" data-value="right"><input type="radio" name="pie-legendAlign" value="right"> Right</label>
+      </div>
     </div>
     <div class="field">
       <label>Pie style</label>
@@ -389,7 +511,7 @@
 
   <!-- ─── Insert button (shared) ──────────────────── -->
   <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
-  <div class="footer">Monium Design System v1.1</div>
+  <div class="footer">Monium Design System v2.0</div>
 
   <script>
     // ═══════════════════════════════════════════════
@@ -398,6 +520,46 @@
     var currentTab = 'line';
     var storedChartData = null;
     var replaceMode = false;
+    var copiedChart = null;
+    var pendingPasteData = null;
+
+    // ═══════════════════════════════════════════════
+    //  Auto-resize textareas
+    // ═══════════════════════════════════════════════
+    function autoResize(el) {
+      if (!el || el.offsetParent === null) return;
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    }
+    var TEXTAREA_IDS = [
+      'line-yInput', 'line-xInput', 'line-legendInput',
+      'area-yInput', 'area-xInput', 'area-legendInput',
+      'bar-yInput', 'bar-xInput', 'bar-legendInput',
+      'pie-valuesInput', 'pie-legendInput'
+    ];
+    TEXTAREA_IDS.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', function () { autoResize(el); });
+        autoResize(el);
+      }
+    });
+
+    // Scoped radio binder — fixes the bug where clicking one group's option
+    // clears the active class on another group's option.
+    function bindRadioGroup(groupId) {
+      document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function (opt) {
+        opt.addEventListener('click', function () {
+          document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function (o) { o.classList.remove('active'); });
+          opt.classList.add('active');
+          opt.querySelector('input').checked = true;
+        });
+      });
+    }
+    bindRadioGroup('line-legendAlignGroup');
+    bindRadioGroup('area-legendAlignGroup');
+    bindRadioGroup('bar-legendAlignGroup');
+    bindRadioGroup('pie-legendAlignGroup');
 
     // ═══════════════════════════════════════════════
     //  Tab switching
@@ -416,14 +578,17 @@
       hideRegenError();
 
       var regenBtn = document.getElementById('regenBtn');
+      var copyBtn = document.getElementById('copyBtn');
       if (storedChartData && storedChartData.chartType === tab) {
-        // Same chart type as detected — show regen, disable insert
+        // Same chart type as detected — show regen + copy, disable insert
         regenBtn.style.display = 'block';
+        copyBtn.style.display = 'block';
         setRegenEnabled(true);
         setInsertEnabled(false);
       } else {
-        // Different chart type or no chart — hide regen, enable insert
+        // Different chart type or no chart — hide regen + copy, enable insert
         regenBtn.style.display = 'none';
+        copyBtn.style.display = 'none';
         setInsertEnabled(true);
       }
       resizeUI();
@@ -534,6 +699,210 @@
     updateAreaStackScaleVisibility();
 
     // ═══════════════════════════════════════════════
+    //  Legend: visibility + count sync
+    // ═══════════════════════════════════════════════
+    function updateLegendFieldsVisibility(type) {
+      var on = document.getElementById(type + '-showLegendCheck').checked;
+      document.getElementById(type + '-legendLabelsField').style.display = on ? 'block' : 'none';
+      document.getElementById(type + '-legendAlignField').style.display = on ? 'block' : 'none';
+      if (on) autoResize(document.getElementById(type + '-legendInput'));
+    }
+
+    function getEffectivePieCount() {
+      var valsRaw = document.getElementById('pie-valuesInput').value.trim();
+      var vals = valsRaw
+        ? valsRaw.split(',').map(function (s) { return parseFloat(s.trim()); }).filter(function (n) { return !isNaN(n); })
+        : [];
+      if (vals.length > 0) return Math.min(20, vals.length);
+      return Math.max(1, Math.min(20, parseInt(document.getElementById('pie-segmentsInput').value) || 5));
+    }
+
+    function syncLegendLabelsToCount(type) {
+      var checkEl = document.getElementById(type + '-showLegendCheck');
+      if (!checkEl || !checkEl.checked) return;
+      var newCount;
+      if (type === 'pie') newCount = getEffectivePieCount();
+      else if (type === 'line') newCount = Math.max(1, Math.min(20, parseInt(document.getElementById('line-countInput').value) || 1));
+      else if (type === 'area') newCount = Math.max(1, Math.min(20, parseInt(document.getElementById('area-countInput').value) || 1));
+      else if (type === 'bar') newCount = Math.max(1, Math.min(20, parseInt(document.getElementById('bar-countInput').value) || 1));
+      else return;
+      var legendEl = document.getElementById(type + '-legendInput');
+      var labels = legendEl.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+      if (newCount > labels.length) {
+        for (var i = labels.length; i < newCount; i++) labels.push('Series ' + (i + 1));
+      } else if (newCount < labels.length) {
+        labels = labels.slice(0, newCount);
+      }
+      legendEl.value = labels.join(', ');
+      autoResize(legendEl);
+    }
+
+    // Bind show-legend checkbox changes per type (also pre-fills labels on enable)
+    ['line', 'area', 'bar', 'pie'].forEach(function (type) {
+      var check = document.getElementById(type + '-showLegendCheck');
+      if (check) {
+        check.addEventListener('change', function () {
+          updateLegendFieldsVisibility(type);
+          syncLegendLabelsToCount(type);
+          resizeUI();
+        });
+      }
+    });
+
+    // Sync legend labels with series count — bind to 'change', NOT 'input',
+    // so digit-by-digit typing in number inputs doesn't truncate labels.
+    document.getElementById('line-countInput').addEventListener('change', function () { syncLegendLabelsToCount('line'); });
+    document.getElementById('area-countInput').addEventListener('change', function () { syncLegendLabelsToCount('area'); });
+    document.getElementById('bar-countInput').addEventListener('change', function () { syncLegendLabelsToCount('bar'); });
+    document.getElementById('pie-segmentsInput').addEventListener('change', function () { syncLegendLabelsToCount('pie'); });
+    document.getElementById('pie-valuesInput').addEventListener('change', function () { syncLegendLabelsToCount('pie'); });
+
+    // ═══════════════════════════════════════════════
+    //  Copy / Paste exact copy
+    // ═══════════════════════════════════════════════
+    function copyChart() {
+      hideRegenError();
+      if (!storedChartData) return;
+      // Gate: require fields that newer pluginData provides
+      if (!storedChartData.colors || (!storedChartData.allSeries && !storedChartData.values)) {
+        showRegenError('Exact copy unavailable: this chart was generated by an older version. Regenerate it once to enable Copy.');
+        return;
+      }
+      copiedChart = JSON.parse(JSON.stringify(storedChartData));
+      updateClipboardUI();
+      resizeUI();
+      // figma.notify lives in plugin context — route via "notify" message
+      var n = copiedChart.linesCount || copiedChart.areasCount || copiedChart.barsCount || copiedChart.segmentsCount || 0;
+      var noun = copiedChart.linesCount ? 'line'
+              : copiedChart.areasCount ? 'area'
+              : copiedChart.barsCount ? 'bar series'
+              : 'segment';
+      parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — ' + n + ' ' + noun + (n === 1 ? '' : 's') + ' ready to paste' } }, '*');
+    }
+
+    function pasteChart() {
+      if (!copiedChart) return;
+      parent.postMessage({ pluginMessage: { type: 'paste', chartData: copiedChart } }, '*');
+      pendingPasteData = copiedChart;
+    }
+
+    function clearCopy() {
+      copiedChart = null;
+      updateClipboardUI();
+      resizeUI();
+    }
+
+    function updateClipboardUI() {
+      var box = document.getElementById('clipboardBox');
+      if (copiedChart) {
+        var n = copiedChart.linesCount || copiedChart.areasCount || copiedChart.barsCount || copiedChart.segmentsCount || 0;
+        var style = copiedChart.lineStyle || copiedChart.areaStyle || copiedChart.barMode || copiedChart.pieStyle || '';
+        var label = style ? (style.charAt(0).toUpperCase() + style.slice(1)) : '';
+        var noun = copiedChart.linesCount ? 'line'
+                : copiedChart.areasCount ? 'area'
+                : copiedChart.barsCount ? 'bar series'
+                : 'segment';
+        document.getElementById('clipboardSummary').textContent =
+          'Copied: ' + n + ' ' + noun + (n === 1 ? '' : 's') + (label ? ' · ' + label : '');
+        box.style.display = 'block';
+      } else {
+        box.style.display = 'none';
+      }
+    }
+
+    // ═══════════════════════════════════════════════
+    //  Populate form from chart data (shared by regenerate + paste)
+    // ═══════════════════════════════════════════════
+    function populateFromChartData(d) {
+      var chartType = d.chartType;
+      if (!chartType) return;
+      switchTab(chartType);
+
+      if (chartType === 'line') {
+        document.getElementById('line-yInput').value = (d.yValues || []).join(', ');
+        document.getElementById('line-yUnitInput').value = d.yUnit || '';
+        document.getElementById('line-xInput').value = (d.xLabels || []).join(', ');
+        document.getElementById('line-countInput').value = String(d.linesCount || 2);
+        setRadio('line-styleGroup', d.lineStyle || 'smooth');
+        document.getElementById('line-topEvent').checked = !!d.topEvent;
+        document.getElementById('line-bottomEvent').checked = !!d.bottomEvent;
+        var hasLegend = (d.showLegend !== undefined) ? !!d.showLegend : ((d.legendLabels || []).length > 0);
+        document.getElementById('line-showLegendCheck').checked = hasLegend;
+        document.getElementById('line-legendInput').value = (d.legendLabels || []).join(', ');
+        setRadio('line-legendAlignGroup', d.legendAlign || 'left');
+        updateLegendFieldsVisibility('line');
+        autoResize(document.getElementById('line-yInput'));
+        autoResize(document.getElementById('line-xInput'));
+        autoResize(document.getElementById('line-legendInput'));
+      } else if (chartType === 'area') {
+        document.getElementById('area-yInput').value = (d.yValues || []).join(', ');
+        document.getElementById('area-yUnitInput').value = d.yUnit || '';
+        document.getElementById('area-xInput').value = (d.xLabels || []).join(', ');
+        document.getElementById('area-countInput').value = String(d.areasCount || 3);
+        setRadio('area-styleGroup', d.areaStyle || 'smooth');
+        setRadio('area-modeGroup', d.areaMode || 'overlap');
+        document.getElementById('area-fillHeightCheck').checked = !!d.fillHeight;
+        document.getElementById('area-opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 0.3);
+        document.getElementById('area-topEvent').checked = !!d.topEvent;
+        document.getElementById('area-bottomEvent').checked = !!d.bottomEvent;
+        var hasLegend = (d.showLegend !== undefined) ? !!d.showLegend : ((d.legendLabels || []).length > 0);
+        document.getElementById('area-showLegendCheck').checked = hasLegend;
+        document.getElementById('area-legendInput').value = (d.legendLabels || []).join(', ');
+        setRadio('area-legendAlignGroup', d.legendAlign || 'left');
+        updateAreaStackScaleVisibility();
+        updateLegendFieldsVisibility('area');
+        autoResize(document.getElementById('area-yInput'));
+        autoResize(document.getElementById('area-xInput'));
+        autoResize(document.getElementById('area-legendInput'));
+      } else if (chartType === 'bar') {
+        document.getElementById('bar-yInput').value = (d.yValues || []).join(', ');
+        document.getElementById('bar-yUnitInput').value = d.yUnit || '';
+        document.getElementById('bar-xInput').value = (d.xLabels || []).join(', ');
+        document.getElementById('bar-countInput').value = String(d.barsCount || 3);
+        setRadio('bar-orientationGroup', d.orientation || 'vertical');
+        setRadio('bar-modeGroup', d.barMode || 'normal');
+        document.getElementById('bar-gapInput').value = String(d.barGap !== undefined ? d.barGap : 1);
+        document.getElementById('bar-opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
+        document.getElementById('bar-denseCheck').checked = !!d.dense;
+        document.getElementById('bar-topEvent').checked = !!d.topEvent;
+        document.getElementById('bar-bottomEvent').checked = !!d.bottomEvent;
+        var hasLegend = (d.showLegend !== undefined) ? !!d.showLegend : ((d.legendLabels || []).length > 0);
+        document.getElementById('bar-showLegendCheck').checked = hasLegend;
+        document.getElementById('bar-legendInput').value = (d.legendLabels || []).join(', ');
+        setRadio('bar-legendAlignGroup', d.legendAlign || 'left');
+        updateBarVisibility();
+        updateLegendFieldsVisibility('bar');
+        autoResize(document.getElementById('bar-yInput'));
+        autoResize(document.getElementById('bar-xInput'));
+        autoResize(document.getElementById('bar-legendInput'));
+      } else if (chartType === 'pie') {
+        if (d.values && d.values.length > 0) document.getElementById('pie-valuesInput').value = d.values.join(', ');
+        else document.getElementById('pie-valuesInput').value = '';
+        document.getElementById('pie-segmentsInput').value = String(d.segmentsCount || 5);
+        setRadio('pie-styleGroup', d.pieStyle || 'donut');
+        document.getElementById('pie-innerRadiusInput').value = String(d.innerRadiusPct || 55);
+        document.getElementById('pie-cornerRadiusInput').value = String(d.cornerRadius || 0);
+        document.getElementById('pie-gapInput').value = String(d.segmentGap !== undefined ? d.segmentGap : 1);
+        document.getElementById('pie-labelsCheck').checked = !!d.showLabels;
+        document.getElementById('pie-totalCheck').checked = !!d.showTotal;
+        document.getElementById('pie-opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
+        var hasLegend = (d.showLegend !== undefined) ? !!d.showLegend : ((d.legendLabels || []).length > 0);
+        document.getElementById('pie-showLegendCheck').checked = hasLegend;
+        document.getElementById('pie-legendInput').value = (d.legendLabels || []).join(', ');
+        setRadio('pie-legendAlignGroup', d.legendAlign || 'left');
+        updatePieDonutVisibility();
+        updatePieSegmentsVisibility();
+        updateLegendFieldsVisibility('pie');
+        autoResize(document.getElementById('pie-valuesInput'));
+        autoResize(document.getElementById('pie-legendInput'));
+      }
+
+      replaceMode = true;
+      setInsertEnabled(true);
+      setRegenEnabled(false);
+    }
+
+    // ═══════════════════════════════════════════════
     //  Regenerate (populate fields from chart data)
     // ═══════════════════════════════════════════════
     function regenerate() {
@@ -543,74 +912,16 @@
         return;
       }
       var d = storedChartData;
-      var chartType = d.chartType;
-
-      if (!chartType) {
+      if (!d.chartType) {
         showRegenError('Failed to detect chart type');
         return;
       }
-
-      // Switch to the correct tab
-      switchTab(chartType);
-
-      if (chartType === 'line') {
+      // Validation for axis-based charts
+      if (d.chartType !== 'pie') {
         if (!d.yValues || d.yValues.length < 2) { showRegenError('Failed to get data: could not read Y axis values'); return; }
         if (!d.xLabels || d.xLabels.length < 1) { showRegenError('Failed to get data: could not read X axis labels'); return; }
-        document.getElementById('line-yInput').value = d.yValues.join(', ');
-        document.getElementById('line-yUnitInput').value = d.yUnit || '';
-        document.getElementById('line-xInput').value = d.xLabels.join(', ');
-        document.getElementById('line-countInput').value = String(d.linesCount || 2);
-        setRadio('line-styleGroup', d.lineStyle || 'smooth');
-        document.getElementById('line-topEvent').checked = !!d.topEvent;
-        document.getElementById('line-bottomEvent').checked = !!d.bottomEvent;
-      } else if (chartType === 'area') {
-        if (!d.yValues || d.yValues.length < 2) { showRegenError('Failed to get data: could not read Y axis values'); return; }
-        if (!d.xLabels || d.xLabels.length < 1) { showRegenError('Failed to get data: could not read X axis labels'); return; }
-        document.getElementById('area-yInput').value = d.yValues.join(', ');
-        document.getElementById('area-yUnitInput').value = d.yUnit || '';
-        document.getElementById('area-xInput').value = d.xLabels.join(', ');
-        document.getElementById('area-countInput').value = String(d.areasCount || 3);
-        setRadio('area-styleGroup', d.areaStyle || 'smooth');
-        setRadio('area-modeGroup', d.areaMode || 'overlap');
-        document.getElementById('area-fillHeightCheck').checked = !!d.fillHeight;
-        document.getElementById('area-opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 0.3);
-        document.getElementById('area-topEvent').checked = !!d.topEvent;
-        document.getElementById('area-bottomEvent').checked = !!d.bottomEvent;
-        updateAreaStackScaleVisibility();
-      } else if (chartType === 'bar') {
-        if (!d.yValues || d.yValues.length < 2) { showRegenError('Failed to get data: could not read Y axis values'); return; }
-        if (!d.xLabels || d.xLabels.length < 1) { showRegenError('Failed to get data: could not read X axis labels'); return; }
-        document.getElementById('bar-yInput').value = d.yValues.join(', ');
-        document.getElementById('bar-yUnitInput').value = d.yUnit || '';
-        document.getElementById('bar-xInput').value = d.xLabels.join(', ');
-        document.getElementById('bar-countInput').value = String(d.barsCount || 3);
-        setRadio('bar-orientationGroup', d.orientation || 'vertical');
-        setRadio('bar-modeGroup', d.barMode || 'normal');
-        document.getElementById('bar-gapInput').value = String(d.barGap !== undefined ? d.barGap : 1);
-        document.getElementById('bar-opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
-        document.getElementById('bar-denseCheck').checked = !!d.dense;
-        document.getElementById('bar-topEvent').checked = !!d.topEvent;
-        document.getElementById('bar-bottomEvent').checked = !!d.bottomEvent;
-        updateBarVisibility();
-      } else if (chartType === 'pie') {
-        if (d.values && d.values.length > 0) {
-          document.getElementById('pie-valuesInput').value = d.values.join(', ');
-        }
-        document.getElementById('pie-segmentsInput').value = String(d.segmentsCount || 5);
-        setRadio('pie-styleGroup', d.pieStyle || 'donut');
-        document.getElementById('pie-innerRadiusInput').value = String(d.innerRadiusPct || 55);
-        document.getElementById('pie-cornerRadiusInput').value = String(d.cornerRadius || 0);
-        document.getElementById('pie-gapInput').value = String(d.segmentGap !== undefined ? d.segmentGap : 1);
-        document.getElementById('pie-labelsCheck').checked = !!d.showLabels;
-        document.getElementById('pie-totalCheck').checked = !!d.showTotal;
-        document.getElementById('pie-opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
-        updatePieDonutVisibility();
-        updatePieSegmentsVisibility();
       }
-
-      replaceMode = true;
-      setInsertEnabled(true);
-      setRegenEnabled(false);
+      populateFromChartData(d);
     }
 
     // ═══════════════════════════════════════════════
@@ -618,6 +929,17 @@
     // ═══════════════════════════════════════════════
     function generate() {
       var msgData = { type: 'generate', chartType: currentTab, replace: replaceMode };
+
+      function readLegend(type) {
+        var showLegend = document.getElementById(type + '-showLegendCheck').checked;
+        var legendRaw = document.getElementById(type + '-legendInput').value.trim();
+        var legendLabels = legendRaw
+          ? legendRaw.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; })
+          : [];
+        var checked = document.querySelector('input[name="' + type + '-legendAlign"]:checked');
+        var legendAlign = checked ? checked.value : 'left';
+        return { showLegend: showLegend, legendLabels: legendLabels, legendAlign: legendAlign };
+      }
 
       if (currentTab === 'line') {
         var yRaw = document.getElementById('line-yInput').value.trim();
@@ -629,6 +951,8 @@
         msgData.yUnit = document.getElementById('line-yUnitInput').value.trim();
         msgData.topEvent = document.getElementById('line-topEvent').checked;
         msgData.bottomEvent = document.getElementById('line-bottomEvent').checked;
+        var lg = readLegend('line');
+        msgData.showLegend = lg.showLegend; msgData.legendLabels = lg.legendLabels; msgData.legendAlign = lg.legendAlign;
 
       } else if (currentTab === 'area') {
         var yRaw = document.getElementById('area-yInput').value.trim();
@@ -643,6 +967,8 @@
         msgData.yUnit = document.getElementById('area-yUnitInput').value.trim();
         msgData.topEvent = document.getElementById('area-topEvent').checked;
         msgData.bottomEvent = document.getElementById('area-bottomEvent').checked;
+        var lg = readLegend('area');
+        msgData.showLegend = lg.showLegend; msgData.legendLabels = lg.legendLabels; msgData.legendAlign = lg.legendAlign;
 
       } else if (currentTab === 'bar') {
         var yRaw = document.getElementById('bar-yInput').value.trim();
@@ -658,6 +984,8 @@
         msgData.yUnit = document.getElementById('bar-yUnitInput').value.trim();
         msgData.topEvent = document.getElementById('bar-topEvent').checked;
         msgData.bottomEvent = document.getElementById('bar-bottomEvent').checked;
+        var lg = readLegend('bar');
+        msgData.showLegend = lg.showLegend; msgData.legendLabels = lg.legendLabels; msgData.legendAlign = lg.legendAlign;
 
       } else if (currentTab === 'pie') {
         var valRaw = document.getElementById('pie-valuesInput').value.trim();
@@ -674,6 +1002,8 @@
         msgData.showLabels = document.getElementById('pie-labelsCheck').checked;
         msgData.showTotal = document.getElementById('pie-totalCheck').checked;
         msgData.fillOpacity = Math.max(0.05, Math.min(1, parseFloat(document.getElementById('pie-opacityInput').value) || 1));
+        var lg = readLegend('pie');
+        msgData.showLegend = lg.showLegend; msgData.legendLabels = lg.legendLabels; msgData.legendAlign = lg.legendAlign;
       }
 
       parent.postMessage({ pluginMessage: msgData }, '*');
@@ -694,6 +1024,7 @@
       var name = document.getElementById('targetName');
       var size = document.getElementById('targetSize');
       var regenBtn = document.getElementById('regenBtn');
+      var copyBtn = document.getElementById('copyBtn');
 
       if (msg.hasFrame) {
         bar.className = 'target-bar active';
@@ -705,18 +1036,26 @@
 
       if (msg.hasChart && msg.chartData) {
         storedChartData = msg.chartData;
-        // Auto-switch to detected chart type tab
-        // switchTab handles regen button visibility and insert state
+        // Auto-switch to detected chart type tab.
+        // switchTab handles regen+copy button visibility and insert state.
         if (storedChartData.chartType) {
           switchTab(storedChartData.chartType);
+        }
+        if (pendingPasteData) {
+          // Paste just completed — auto-populate the form so the user can edit
+          // immediately, mirroring "Get values from chart" behavior.
+          populateFromChartData(msg.chartData);
+          pendingPasteData = null;
         }
       } else {
         storedChartData = null;
         regenBtn.style.display = 'none';
+        copyBtn.style.display = 'none';
         replaceMode = false;
         setInsertEnabled(true);
       }
 
+      updateClipboardUI();
       resizeUI();
     };
 

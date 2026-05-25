@@ -166,6 +166,22 @@ This means the unified plugin can detect and regenerate charts created by ANY in
 
 `insertAndNotify()` uses an explicit `replacedChild` flag (not position coordinates) to determine whether a child chart was replaced, so replacement works correctly even when the old chart was at position (0, 0).
 
+### Stale `pluginData` after a merge — regenerate old charts
+
+When a merge introduces new fields into `chartParams` (e.g. `showLegend`, `legendAlign`, `legendLabels`, `allSeries`, `colors`, event segments), charts that were generated **before** the merge keep their original `pluginData` and lack those fields. Symptoms:
+- Newly added features (legend, exact copy) appear inactive on old charts.
+- Detection may seem off because the readback path can't populate the new UI fields with sensible defaults.
+
+The unified plugin remains backwards-compatible — it reads whatever fields are present and falls back to sensible defaults — but features that depend on new fields won't activate until the user **regenerates** the chart. Recommend in release notes / commit message: "Regenerate any existing chart to pick up <new feature>".
+
+Do NOT attempt to retro-migrate old `pluginData` by reading layer structure unless the new field is straightforwardly derivable. Adding speculative migration logic creates a maintenance burden and silent drift between fresh and migrated charts. Just document the regenerate step.
+
+### Robust chart lookup — recursive `findChartFrame`
+
+The unified `findChartFrame` does **BFS through all descendants** (FRAME / COMPONENT / INSTANCE / GROUP) with a safety cap (~200 nodes), not just direct children. This handles cases where the chart container is wrapped in an autolayout sub-frame, placed inside a group, or otherwise nested deeper than one level. The cap prevents runaway scans on very large frames; 200 is well above what any real chart layout needs.
+
+When porting changes from individual plugins (which only check direct children), do NOT downgrade the unified plugin's recursive lookup — keep the BFS version.
+
 ### "Get values from chart" button visibility
 
 The "Get values from chart" button is shown **only** when the detected chart type matches the currently active tab:

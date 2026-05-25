@@ -123,6 +123,15 @@ var DEFAULT_W = 500;
 var DEFAULT_H = 500;
 var CHART_NAME = "Chart Pie";
 
+// ─── Legend constants ───────────────────────────────────────
+var LEGEND_DOT_SIZE = 8;
+var LEGEND_LINE_TEXT_GAP = 6;
+var LEGEND_ITEM_GAP = 12;
+var LEGEND_ROW_H = 14;
+var LEGEND_ROW_GAP = 2;
+var LEGEND_MAX_ROWS_PER_PAGE = 3;
+var LEGEND_SIDE_MARGIN = 16;
+
 // ─── Selection tracking ─────────────────────────────────────
 var lastSelectedFrameId = null;
 
@@ -362,6 +371,174 @@ function drawValueLabels(parent, cx, cy, outerR, values, labelOffset) {
   return nodes;
 }
 
+// ─── Legend helpers ─────────────────────────────────────────
+function measureLegendItems(labels, maxTextWidth) {
+  var texts = [];
+  var widths = [];
+  for (var i = 0; i < labels.length; i++) {
+    var label = labels[i] || " ";
+    var t = figma.createText();
+    t.fontName = { family: "Inter", style: "Regular" };
+    t.fontSize = 11;
+    t.characters = label;
+    if (t.width <= maxTextWidth) {
+      widths.push(t.width);
+      texts.push(label);
+      t.remove();
+      continue;
+    }
+    var lo = 0, hi = label.length;
+    while (lo < hi) {
+      var mid = Math.floor((lo + hi + 1) / 2);
+      t.characters = label.substring(0, mid) + "…";
+      if (t.width <= maxTextWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    var truncated = label.substring(0, lo) + "…";
+    t.characters = truncated;
+    widths.push(t.width);
+    texts.push(truncated);
+    t.remove();
+  }
+  return { texts: texts, widths: widths };
+}
+
+function packLegendRows(widths, availableWidth) {
+  var rows = [];
+  var current = [];
+  var currentW = 0;
+  for (var i = 0; i < widths.length; i++) {
+    var itemW = LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[i];
+    if (current.length === 0) {
+      current.push(i);
+      currentW = itemW;
+    } else {
+      var withGap = currentW + LEGEND_ITEM_GAP + itemW;
+      if (withGap > availableWidth) {
+        rows.push(current);
+        current = [i];
+        currentW = itemW;
+      } else {
+        current.push(i);
+        currentW = withGap;
+      }
+    }
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+
+function drawLegend(parent, legendLeftBound, legendWidth, legendY, labels, colors, rows, widths, page, align) {
+  var nodes = [];
+  var totalPages = Math.max(1, Math.ceil(rows.length / LEGEND_MAX_ROWS_PER_PAGE));
+  var currentPage = Math.max(1, Math.min(page || 1, totalPages));
+  var firstRow = (currentPage - 1) * LEGEND_MAX_ROWS_PER_PAGE;
+  var lastRow = Math.min(firstRow + LEGEND_MAX_ROWS_PER_PAGE, rows.length);
+
+  for (var ri = firstRow; ri < lastRow; ri++) {
+    var rowIdxs = rows[ri];
+    var rowTotalW = 0;
+    for (var k = 0; k < rowIdxs.length; k++) {
+      rowTotalW += LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[rowIdxs[k]];
+      if (k < rowIdxs.length - 1) rowTotalW += LEGEND_ITEM_GAP;
+    }
+    var rowStartX;
+    if (align === "right") {
+      rowStartX = legendLeftBound + legendWidth - rowTotalW;
+    } else if (align === "center") {
+      rowStartX = legendLeftBound + (legendWidth - rowTotalW) / 2;
+    } else {
+      rowStartX = legendLeftBound;
+    }
+    var rowY = legendY + (ri - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var x = rowStartX;
+
+    for (var k = 0; k < rowIdxs.length; k++) {
+      var idx = rowIdxs[k];
+      var color = colors[idx % colors.length];
+
+      var dot = figma.createEllipse();
+      dot.x = x;
+      dot.y = rowY + (LEGEND_ROW_H - LEGEND_DOT_SIZE) / 2;
+      dot.resize(LEGEND_DOT_SIZE, LEGEND_DOT_SIZE);
+      dot.fills = [{ type: "SOLID", color: color }];
+      dot.strokes = [];
+      parent.appendChild(dot);
+      nodes.push(dot);
+
+      var t = figma.createText();
+      t.fontName = { family: "Inter", style: "Regular" };
+      t.fontSize = 11;
+      t.characters = labels[idx];
+      t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+      t.x = x + LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP;
+      t.y = rowY;
+      parent.appendChild(t);
+      nodes.push(t);
+
+      x += LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[idx] + LEGEND_ITEM_GAP;
+    }
+  }
+
+  if (rows.length > LEGEND_MAX_ROWS_PER_PAGE) {
+    var pageY = legendY + (lastRow - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var paginatorNodes = drawPaginator(parent, legendLeftBound, legendWidth, pageY, currentPage, totalPages, align);
+    for (var i = 0; i < paginatorNodes.length; i++) nodes.push(paginatorNodes[i]);
+  }
+  return nodes;
+}
+
+function drawPaginator(parent, legendLeftBound, legendWidth, pageY, page, totalPages, align) {
+  var nodes = [];
+  var TRI_W = 10;
+  var TRI_H = 8;
+  var GAP = 4;
+  var ACCENT = { r: 0.078, g: 0.176, b: 0.435 };
+  var DISABLED = { r: 0.737, g: 0.769, b: 0.812 };
+
+  var t = figma.createText();
+  t.fontName = { family: "Inter", style: "Regular" };
+  t.fontSize = 11;
+  t.characters = page + "/" + totalPages;
+  t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+  parent.appendChild(t);
+  var textW = t.width;
+  var totalW = TRI_W + GAP + textW + GAP + TRI_W;
+
+  var startX;
+  if (align === "right") {
+    startX = legendLeftBound + legendWidth - totalW;
+  } else if (align === "center") {
+    startX = legendLeftBound + (legendWidth - totalW) / 2;
+  } else {
+    startX = legendLeftBound;
+  }
+
+  var up = figma.createVector();
+  up.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 " + TRI_H + " L " + (TRI_W / 2) + " 0 L " + TRI_W + " " + TRI_H + " Z" }];
+  up.x = startX;
+  up.y = pageY + 3;
+  up.fills = [{ type: "SOLID", color: (page > 1) ? ACCENT : DISABLED }];
+  up.strokes = [];
+  parent.appendChild(up);
+  nodes.push(up);
+
+  t.x = startX + TRI_W + GAP;
+  t.y = pageY;
+  nodes.push(t);
+
+  var down = figma.createVector();
+  down.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 0 L " + (TRI_W / 2) + " " + TRI_H + " L " + TRI_W + " 0 Z" }];
+  down.x = startX + TRI_W + GAP + textW + GAP;
+  down.y = pageY + 3;
+  down.fills = [{ type: "SOLID", color: (page < totalPages) ? ACCENT : DISABLED }];
+  down.strokes = [];
+  parent.appendChild(down);
+  nodes.push(down);
+
+  return nodes;
+}
+
 // ─── Draw center total text ─────────────────────────────────
 function drawCenterTotal(parent, cx, cy, values) {
   var nodes = [];
@@ -386,24 +563,44 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 900));
     return;
   }
-  if (msg.type !== "generate") return;
+  if (msg.type === "notify") {
+    figma.notify(msg.message);
+    return;
+  }
+  if (msg.type === "generate") {
+    await renderChart(msg, null);
+    return;
+  }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
 
+async function renderChart(params, exactData) {
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-  var values = msg.values || [];
-  var segmentsCount = msg.segmentsCount || 5;
-  var pieStyle = msg.pieStyle || "donut";
-  var innerRadiusPct = msg.innerRadiusPct || 55;
-  var cornerRadius = msg.cornerRadius || 0;
-  var segmentGap = (msg.segmentGap !== undefined) ? msg.segmentGap : 1;
-  var showLabels = msg.showLabels || false;
-  var showTotal = msg.showTotal || false;
-  var fillOpacity = (msg.fillOpacity !== undefined) ? msg.fillOpacity : 1;
+  var values = params.values || [];
+  var segmentsCount = params.segmentsCount || 5;
+  var pieStyle = params.pieStyle || "donut";
+  var innerRadiusPct = params.innerRadiusPct || 55;
+  var cornerRadius = params.cornerRadius || 0;
+  var segmentGap = (params.segmentGap !== undefined) ? params.segmentGap : 1;
+  var showLabels = params.showLabels || false;
+  var showTotal = params.showTotal || false;
+  var fillOpacity = (params.fillOpacity !== undefined) ? params.fillOpacity : 1;
   fillOpacity = Math.max(0.05, Math.min(1, fillOpacity));
-  var replaceMode = msg.replace || false;
+  // Paste always replaces a chart inside the target frame (if present),
+  // matching the regenerate flow's replace=true semantics.
+  var replaceMode = exactData ? true : (params.replace || false);
 
-  // Generate random values if none provided
-  if (!values || values.length < 1) {
+  // Resolve values:
+  //  - exactData: use the source's deterministic values directly
+  //  - otherwise: keep existing logic (random fill when empty)
+  if (exactData) {
+    values = params.values;
+  } else if (!values || values.length < 1) {
     values = [];
     for (var i = 0; i < segmentsCount; i++) {
       values.push(Math.round(5 + Math.random() * 195));
@@ -412,17 +609,24 @@ figma.ui.onmessage = async function (msg) {
 
   segmentsCount = values.length;
 
-  var chartParams = {
-    values: values,
-    segmentsCount: segmentsCount,
-    pieStyle: pieStyle,
-    innerRadiusPct: innerRadiusPct,
-    cornerRadius: cornerRadius,
-    segmentGap: segmentGap,
-    showLabels: showLabels,
-    showTotal: showTotal,
-    fillOpacity: fillOpacity
-  };
+  // Backward compat: if showLegend was not stored, derive from non-empty labels.
+  var showLegend = (params.showLegend !== undefined)
+    ? !!params.showLegend
+    : ((params.legendLabels || []).length > 0);
+  var legendAlign = params.legendAlign || "left";
+  if (legendAlign !== "left" && legendAlign !== "center" && legendAlign !== "right") legendAlign = "left";
+  var legendLabels = (params.legendLabels || []).filter(function (s) { return s && String(s).length > 0; });
+  if (showLegend) {
+    if (legendLabels.length > segmentsCount) {
+      legendLabels = legendLabels.slice(0, segmentsCount);
+    } else {
+      for (var lpi = legendLabels.length; lpi < segmentsCount; lpi++) {
+        legendLabels.push("Series " + (lpi + 1));
+      }
+    }
+  } else {
+    legendLabels = [];
+  }
 
   var target = getTargetFrame();
   var w, h;
@@ -458,16 +662,43 @@ figma.ui.onmessage = async function (msg) {
     container.clipsContent = true;
   }
 
-  // Compute pie geometry
+  // Pre-layout legend so pie geometry accounts for the legend area.
+  var legendLeftBound = LEGEND_SIDE_MARGIN;
+  var legendWidth = w - LEGEND_SIDE_MARGIN * 2;
+  var legendDisplayTexts = [];
+  var legendItemWidths = [];
+  var legendRows = [];
+  var legendBlockH = 0;
+  if (legendLabels.length > 0) {
+    var maxTextWidth = Math.max(20, legendWidth - LEGEND_DOT_SIZE - LEGEND_LINE_TEXT_GAP);
+    var measured = measureLegendItems(legendLabels, maxTextWidth);
+    legendDisplayTexts = measured.texts;
+    legendItemWidths = measured.widths;
+    legendRows = packLegendRows(legendItemWidths, legendWidth);
+    var legendVisibleRows = Math.min(legendRows.length, LEGEND_MAX_ROWS_PER_PAGE);
+    var legendPaginated = legendRows.length > LEGEND_MAX_ROWS_PER_PAGE;
+    legendBlockH = legendVisibleRows * LEGEND_ROW_H + Math.max(0, legendVisibleRows - 1) * LEGEND_ROW_GAP;
+    if (legendPaginated) legendBlockH += 4 + 14;
+  }
+  var legendExtraBottom = (legendBlockH > 0) ? (legendBlockH + 8) : 0;
+
+  // Compute pie geometry — pie fits ABOVE the legend area.
   var labelMargin = showLabels ? 60 : 10;
-  var availableSize = Math.min(w, h) - labelMargin * 2;
+  var pieAreaH = h - legendExtraBottom;
+  var availableSize = Math.min(w, pieAreaH) - labelMargin * 2;
   var outerR = availableSize / 2;
   var cx = w / 2;
-  var cy = h / 2;
+  var cy = pieAreaH / 2;
   var innerR = (pieStyle === "donut") ? outerR * (innerRadiusPct / 100) : 0;
   var cr = (pieStyle === "donut") ? cornerRadius : 0;
 
-  var distinctColors = selectDistinctColors(segmentsCount);
+  // Reuse exact colors if provided, else generate distinct ones
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === segmentsCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(segmentsCount);
+  }
 
   // Draw slices
   var sliceNodes = drawSlices(container, cx, cy, outerR, innerR, values, distinctColors, fillOpacity, cr, segmentGap);
@@ -498,28 +729,54 @@ figma.ui.onmessage = async function (msg) {
     }
   }
 
-  // Store params
+  // Draw legend
+  if (legendLabels.length > 0 && legendRows.length > 0) {
+    var legendY = h - legendBlockH - 3;
+    var legendNodes = drawLegend(container, legendLeftBound, legendWidth, legendY, legendDisplayTexts, distinctColors, legendRows, legendItemWidths, 1, legendAlign);
+    if (legendNodes.length > 1) {
+      var legendGroup = figma.group(legendNodes, container);
+      legendGroup.name = "Legend";
+    }
+  }
+
+  // Persist full chart data so future copy operations can reproduce
+  // the chart exactly (same colors).
+  var chartParams = {
+    values: values,
+    segmentsCount: segmentsCount,
+    pieStyle: pieStyle,
+    innerRadiusPct: innerRadiusPct,
+    cornerRadius: cornerRadius,
+    segmentGap: segmentGap,
+    showLabels: showLabels,
+    showTotal: showTotal,
+    fillOpacity: fillOpacity,
+    showLegend: showLegend,
+    legendAlign: legendAlign,
+    legendLabels: legendLabels,
+    colors: distinctColors
+  };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
 
   // Insert
   if (reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (replaceMode && target) {
     target.appendChild(container);
     container.x = oldX; container.y = oldY;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (target) {
     target.appendChild(container);
     container.x = 0; container.y = 0;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify('Chart added to "' + target.name + '"');
+    figma.notify(exactData ? 'Exact copy pasted to "' + target.name + '"' : 'Chart added to "' + target.name + '"');
   } else {
     figma.currentPage.appendChild(container);
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Pie chart created!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Pie chart created!");
   }
 
   sendSelection();
-};
+}

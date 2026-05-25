@@ -372,33 +372,58 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 800));
     return;
   }
-  if (msg.type !== "generate") return;
+  if (msg.type === "notify") {
+    figma.notify(msg.message);
+    return;
+  }
+  if (msg.type === "generate") {
+    await renderChart(msg, null);
+    return;
+  }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
 
+async function renderChart(params, exactData) {
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-  var yValues = msg.yValues;
-  var xLabels = msg.xLabels;
-  var linesCount = msg.linesCount;
-  var lineStyle = msg.lineStyle || "smooth";
-  var yUnit = msg.yUnit || "";
-  var topEvent = msg.topEvent || false;
-  var bottomEvent = msg.bottomEvent || false;
-  var replaceMode = msg.replace || false;
+  var yValues = params.yValues;
+  var xLabels = params.xLabels;
+  var linesCount = params.linesCount;
+  var lineStyle = params.lineStyle || "smooth";
+  var yUnit = params.yUnit || "";
+  var topEvent = params.topEvent || false;
+  var bottomEvent = params.bottomEvent || false;
+  // Paste always replaces a chart inside the target frame (if present),
+  // matching the regenerate flow's replace=true semantics.
+  var replaceMode = exactData ? true : (params.replace || false);
 
   if (!yValues || yValues.length < 2) yValues = [0, 50, 100, 150, 200];
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!linesCount || linesCount < 1) linesCount = 2;
   if (linesCount > 20) linesCount = 20;
 
-  var chartParams = {
-    yValues: yValues,
-    yUnit: yUnit,
-    xLabels: xLabels,
-    linesCount: linesCount,
-    lineStyle: lineStyle,
-    topEvent: topEvent,
-    bottomEvent: bottomEvent
-  };
+  // Backward compat: if showLegend was not stored, derive from non-empty labels.
+  var showLegend = (params.showLegend !== undefined)
+    ? !!params.showLegend
+    : ((params.legendLabels || []).length > 0);
+  var legendAlign = params.legendAlign || "left";
+  if (legendAlign !== "left" && legendAlign !== "center" && legendAlign !== "right") legendAlign = "left";
+  var legendLabels = (params.legendLabels || []).filter(function (s) { return s && String(s).length > 0; });
+  if (showLegend) {
+    if (legendLabels.length > linesCount) {
+      legendLabels = legendLabels.slice(0, linesCount);
+    } else {
+      for (var lpi = legendLabels.length; lpi < linesCount; lpi++) {
+        legendLabels.push("Series " + (lpi + 1));
+      }
+    }
+  } else {
+    legendLabels = [];
+  }
 
   var yMin = Math.min.apply(null, yValues);
   var yMax = Math.max.apply(null, yValues);
@@ -416,7 +441,6 @@ figma.ui.onmessage = async function (msg) {
     var existingChart = findChartFrame(target);
     if (existingChart) {
       if (existingChart.id === target.id) {
-        // Selected frame IS the chart — clear children, reuse frame
         w = target.width;
         h = target.height;
         var kids = [];
@@ -425,7 +449,6 @@ figma.ui.onmessage = async function (msg) {
         container = target;
         reuseContainer = true;
       } else {
-        // Chart is a child — remove it, create new one
         w = target.width;
         h = target.height;
         oldX = existingChart.x;
@@ -445,33 +468,53 @@ figma.ui.onmessage = async function (msg) {
     container.clipsContent = true;
   }
 
-  // Generate random data for each line
   var pointCount = xLabels.length;
   var peakMultiplier = (lineStyle === "peak") ? 10 : 1;
   var dataPointCount = (pointCount - 1) * peakMultiplier + 1;
 
-  var allSeries = [];
-  for (var li = 0; li < linesCount; li++) {
-    var vals = [];
-    if (lineStyle === "peak") {
-      var baseLevel = yMin + (yMax - yMin) * 0.05;
-      for (var pi = 0; pi < dataPointCount; pi++) {
-        var spike = Math.random() < 0.15;
-        if (spike) {
+  // Reuse exact line data if provided, else generate randomly
+  var allSeries;
+  if (exactData && exactData.allSeries && exactData.allSeries.length === linesCount) {
+    allSeries = exactData.allSeries;
+  } else {
+    allSeries = [];
+    for (var li = 0; li < linesCount; li++) {
+      var vals = [];
+      if (lineStyle === "peak") {
+        var baseLevel = yMin + (yMax - yMin) * 0.05;
+        for (var pi = 0; pi < dataPointCount; pi++) {
+          var spike = Math.random() < 0.15;
+          if (spike) {
+            vals.push(yMin + Math.random() * (yMax - yMin));
+          } else {
+            vals.push(baseLevel + Math.random() * (yMax - yMin) * 0.1);
+          }
+        }
+      } else {
+        for (var pi = 0; pi < pointCount; pi++) {
           vals.push(yMin + Math.random() * (yMax - yMin));
-        } else {
-          vals.push(baseLevel + Math.random() * (yMax - yMin) * 0.1);
         }
       }
-    } else {
-      for (var pi = 0; pi < pointCount; pi++) {
-        vals.push(yMin + Math.random() * (yMax - yMin));
-      }
+      allSeries.push(vals);
     }
-    allSeries.push(vals);
   }
 
-  // Measure widest Y label to calculate left padding
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === linesCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(linesCount);
+  }
+
+  var topEventSegments = null;
+  var bottomEventSegments = null;
+  if (topEvent) {
+    topEventSegments = (exactData && exactData.topEventSegments) ? exactData.topEventSegments : buildEventSegments("top");
+  }
+  if (bottomEvent) {
+    bottomEventSegments = (exactData && exactData.bottomEventSegments) ? exactData.bottomEventSegments : buildEventSegments("bottom");
+  }
+
   var maxLabelWidth = 0;
   for (var mi = 0; mi < yValues.length; mi++) {
     var measure = figma.createText();
@@ -483,22 +526,42 @@ figma.ui.onmessage = async function (msg) {
   }
   var padLeft = maxLabelWidth + PAD_GAP + 2;
 
+  // Pre-layout legend so plot height accounts for the actual rows/paginator.
+  // Legend extent matches the plot (Y-axis-grid) horizontal range.
+  var legendLeftBound = padLeft;
+  var legendWidth = w - padLeft - PAD_RIGHT;
+  var legendDisplayTexts = [];
+  var legendItemWidths = [];
+  var legendRows = [];
+  var legendTotalPages = 1;
+  var legendVisibleRows = 0;
+  var legendPaginated = false;
+  var legendBlockH = 0;
+  if (legendLabels.length > 0) {
+    var maxTextWidth = Math.max(20, legendWidth - LEGEND_LINE_W - LEGEND_LINE_TEXT_GAP);
+    var measured = measureLegendItems(legendLabels, maxTextWidth);
+    legendDisplayTexts = measured.texts;
+    legendItemWidths = measured.widths;
+    legendRows = packLegendRows(legendItemWidths, legendWidth);
+    legendVisibleRows = Math.min(legendRows.length, 3);
+    legendPaginated = legendRows.length > 3;
+    legendTotalPages = Math.max(1, Math.ceil(legendRows.length / 3));
+    legendBlockH = legendVisibleRows * 14 + Math.max(0, legendVisibleRows - 1) * 4;
+    if (legendPaginated) legendBlockH += 4 + 14;
+  }
+  var legendExtraBottom = (legendBlockH > 0) ? (legendBlockH + 8) : 0;
   var plot = {
     x: padLeft,
     y: PAD_TOP,
     w: w - padLeft - PAD_RIGHT,
-    h: h - PAD_TOP - PAD_BOTTOM
+    h: h - PAD_TOP - PAD_BOTTOM - legendExtraBottom
   };
 
-  // Draw chart elements and collect nodes for grouping
   var gridNodes = drawGrid(container, plot, yValues, xLabels);
   var yLabelNodes = drawYLabels(container, plot, yValues, yMin, yMax, yUnit);
   var xLabelNodes = drawXLabels(container, plot, xLabels);
-
-  var distinctColors = selectDistinctColors(linesCount);
   var lineNodes = drawLines(container, plot, allSeries, yMin, yMax, lineStyle, distinctColors);
 
-  // Group nodes
   if (gridNodes.length > 1) {
     var gridGroup = figma.group(gridNodes, container);
     gridGroup.name = "Grid";
@@ -516,51 +579,74 @@ figma.ui.onmessage = async function (msg) {
     linesGroup.name = "Lines";
   } else if (lineNodes.length === 1) {
     lineNodes[0].name = "Lines";
-    container.appendChild(lineNodes[0]); // move to top z-order
+    container.appendChild(lineNodes[0]);
   }
 
-  if (topEvent) {
-    var topEventNodes = drawEventBar(container, plot, "top", xLabels.length);
+  if (topEvent && topEventSegments) {
+    var topEventNodes = drawEventSegments(container, plot, "top", topEventSegments);
     if (topEventNodes.length > 1) {
       var topEventGroup = figma.group(topEventNodes, container);
       topEventGroup.name = "Top Events";
     }
   }
-  if (bottomEvent) {
-    var bottomEventNodes = drawEventBar(container, plot, "bottom", xLabels.length);
+  if (bottomEvent && bottomEventSegments) {
+    var bottomEventNodes = drawEventSegments(container, plot, "bottom", bottomEventSegments);
     if (bottomEventNodes.length > 1) {
       var bottomEventGroup = figma.group(bottomEventNodes, container);
       bottomEventGroup.name = "Bottom Events";
     }
   }
 
-  // Store chart parameters for re-generation
+  if (legendLabels.length > 0 && legendRows.length > 0) {
+    var legendY = plot.y + plot.h + PAD_BOTTOM + 5;
+    var legendNodes = drawLegend(container, legendLeftBound, legendWidth, legendY, legendDisplayTexts, distinctColors, legendRows, legendItemWidths, 1, legendAlign);
+    if (legendNodes.length > 1) {
+      var legendGroup = figma.group(legendNodes, container);
+      legendGroup.name = "Legend";
+    }
+  }
+
+  var chartParams = {
+    yValues: yValues,
+    yUnit: yUnit,
+    xLabels: xLabels,
+    linesCount: linesCount,
+    lineStyle: lineStyle,
+    topEvent: topEvent,
+    bottomEvent: bottomEvent,
+    showLegend: showLegend,
+    legendAlign: legendAlign,
+    legendLabels: legendLabels,
+    allSeries: allSeries,
+    colors: distinctColors,
+    topEventSegments: topEventSegments,
+    bottomEventSegments: bottomEventSegments
+  };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
 
-  // Insert
   if (reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (replaceMode && target) {
     target.appendChild(container);
     container.x = oldX;
     container.y = oldY;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (target) {
     target.appendChild(container);
     container.x = 0;
     container.y = 0;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify('Chart added to "' + target.name + '"');
+    figma.notify(exactData ? 'Exact copy pasted to "' + target.name + '"' : 'Chart added to "' + target.name + '"');
   } else {
     figma.currentPage.appendChild(container);
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Line chart created!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Line chart created!");
   }
 
   sendSelection();
-};
+}
 
 // ─── Grid ───────────────────────────────────────────────────
 function drawGrid(parent, p, yValues, xLabels) {
@@ -743,46 +829,228 @@ var BOTTOM_EVENT_COLORS = [
 
 var BAR_HEIGHT = 6;
 
-function drawEventBar(parent, p, position, pointCount) {
-  var nodes = [];
-  var y;
-  if (position === "top") {
-    y = p.y - BAR_HEIGHT - 2;
-  } else {
-    y = p.y + p.h + 1;
-  }
+function buildEventSegments(position) {
+  // Segments use x and w as fractions of plot width (0..1) so the layout
+  // is identical when re-rendered into a differently-sized frame.
+  var segments = [];
+  var segMinW = 0.02;
+  var segMaxW = 0.08;
+  var gapMinW = 0.005;
+  var gapMaxW = 0.04;
+  var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
 
-  var totalW = p.w;
-  var segMinW = totalW * 0.02;
-  var segMaxW = totalW * 0.08;
-  var gapMinW = totalW * 0.005;
-  var gapMaxW = totalW * 0.04;
-
-  var x = p.x;
-  var endX = p.x + totalW;
-
-  while (x < endX) {
+  var x = 0;
+  while (x < 1) {
     var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
     x += gap;
-    if (x >= endX) break;
+    if (x >= 1) break;
 
     var segW = segMinW + Math.random() * (segMaxW - segMinW);
-    if (x + segW > endX) segW = endX - x;
-    if (segW < 1) break;
+    if (x + segW > 1) segW = 1 - x;
+    if (segW < 0.001) break;
 
-    var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
     var color = palette[Math.floor(Math.random() * palette.length)];
     var opacity = 0.4 + Math.random() * 0.6;
 
-    var rect = figma.createRectangle();
-    rect.x = x;
-    rect.y = y;
-    rect.resize(segW, BAR_HEIGHT);
-    rect.fills = [{ type: "SOLID", color: color, opacity: opacity }];
-    parent.appendChild(rect);
-    nodes.push(rect);
-
+    segments.push({ x: x, w: segW, color: color, opacity: opacity });
     x += segW;
   }
+  return segments;
+}
+
+function drawEventSegments(parent, p, position, segments) {
+  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
+  var nodes = [];
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
+    var rect = figma.createRectangle();
+    rect.x = p.x + s.x * p.w;
+    rect.y = y;
+    rect.resize(s.w * p.w, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: s.color, opacity: s.opacity }];
+    parent.appendChild(rect);
+    nodes.push(rect);
+  }
+  return nodes;
+}
+
+// ─── Legend ─────────────────────────────────────────────────
+var LEGEND_LINE_W = 14;
+var LEGEND_LINE_H = 2;
+var LEGEND_LINE_TEXT_GAP = 6;
+var LEGEND_ITEM_GAP = 12;
+var LEGEND_ROW_H = 14;
+var LEGEND_ROW_GAP = 2;
+var LEGEND_MAX_ROWS_PER_PAGE = 3;
+
+// Measure legend labels, truncating with ellipsis when a label exceeds maxTextWidth.
+// Inter font must already be loaded. Returns { texts, widths } — display strings + their widths.
+function measureLegendItems(labels, maxTextWidth) {
+  var texts = [];
+  var widths = [];
+  for (var i = 0; i < labels.length; i++) {
+    var label = labels[i] || " ";
+    var t = figma.createText();
+    t.fontName = { family: "Inter", style: "Regular" };
+    t.fontSize = 11;
+    t.characters = label;
+    if (t.width <= maxTextWidth) {
+      widths.push(t.width);
+      texts.push(label);
+      t.remove();
+      continue;
+    }
+    // Binary search the longest prefix whose width with "…" fits.
+    var lo = 0, hi = label.length;
+    while (lo < hi) {
+      var mid = Math.floor((lo + hi + 1) / 2);
+      t.characters = label.substring(0, mid) + "…";
+      if (t.width <= maxTextWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    var truncated = label.substring(0, lo) + "…";
+    t.characters = truncated;
+    widths.push(t.width);
+    texts.push(truncated);
+    t.remove();
+  }
+  return { texts: texts, widths: widths };
+}
+
+// Greedy pack legend items into rows within available width.
+// Returns rows as arrays of indices into the labels/widths arrays.
+function packLegendRows(widths, availableWidth) {
+  var rows = [];
+  var current = [];
+  var currentW = 0;
+  for (var i = 0; i < widths.length; i++) {
+    var itemW = LEGEND_LINE_W + LEGEND_LINE_TEXT_GAP + widths[i];
+    if (current.length === 0) {
+      current.push(i);
+      currentW = itemW;
+    } else {
+      var withGap = currentW + LEGEND_ITEM_GAP + itemW;
+      if (withGap > availableWidth) {
+        rows.push(current);
+        current = [i];
+        currentW = itemW;
+      } else {
+        current.push(i);
+        currentW = withGap;
+      }
+    }
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+
+function drawLegend(parent, legendLeftBound, legendWidth, legendY, labels, colors, rows, widths, page, align) {
+  var nodes = [];
+  var totalPages = Math.max(1, Math.ceil(rows.length / LEGEND_MAX_ROWS_PER_PAGE));
+  var currentPage = Math.max(1, Math.min(page || 1, totalPages));
+  var firstRow = (currentPage - 1) * LEGEND_MAX_ROWS_PER_PAGE;
+  var lastRow = Math.min(firstRow + LEGEND_MAX_ROWS_PER_PAGE, rows.length);
+
+  for (var ri = firstRow; ri < lastRow; ri++) {
+    var rowIdxs = rows[ri];
+    var rowTotalW = 0;
+    for (var k = 0; k < rowIdxs.length; k++) {
+      rowTotalW += LEGEND_LINE_W + LEGEND_LINE_TEXT_GAP + widths[rowIdxs[k]];
+      if (k < rowIdxs.length - 1) rowTotalW += LEGEND_ITEM_GAP;
+    }
+    var rowStartX;
+    if (align === "right") {
+      rowStartX = legendLeftBound + legendWidth - rowTotalW;
+    } else if (align === "center") {
+      rowStartX = legendLeftBound + (legendWidth - rowTotalW) / 2;
+    } else {
+      rowStartX = legendLeftBound;
+    }
+    var rowY = legendY + (ri - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var x = rowStartX;
+
+    for (var k = 0; k < rowIdxs.length; k++) {
+      var idx = rowIdxs[k];
+      var color = colors[idx % colors.length];
+
+      var rect = figma.createRectangle();
+      rect.x = x;
+      rect.y = rowY + 6;
+      rect.resize(LEGEND_LINE_W, LEGEND_LINE_H);
+      rect.cornerRadius = 1;
+      rect.fills = [{ type: "SOLID", color: color }];
+      parent.appendChild(rect);
+      nodes.push(rect);
+
+      var t = figma.createText();
+      t.fontName = { family: "Inter", style: "Regular" };
+      t.fontSize = 11;
+      t.characters = labels[idx];
+      t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+      t.x = x + LEGEND_LINE_W + LEGEND_LINE_TEXT_GAP;
+      t.y = rowY;
+      parent.appendChild(t);
+      nodes.push(t);
+
+      x += LEGEND_LINE_W + LEGEND_LINE_TEXT_GAP + widths[idx] + LEGEND_ITEM_GAP;
+    }
+  }
+
+  if (rows.length > LEGEND_MAX_ROWS_PER_PAGE) {
+    var pageY = legendY + (lastRow - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var paginatorNodes = drawPaginator(parent, legendLeftBound, legendWidth, pageY, currentPage, totalPages, align);
+    for (var i = 0; i < paginatorNodes.length; i++) nodes.push(paginatorNodes[i]);
+  }
+  return nodes;
+}
+
+function drawPaginator(parent, legendLeftBound, legendWidth, pageY, page, totalPages, align) {
+  var nodes = [];
+  var TRI_W = 10;
+  var TRI_H = 8;
+  var GAP = 4;
+  var ACCENT = { r: 0.078, g: 0.176, b: 0.435 };   // dark navy #14306F
+  var DISABLED = { r: 0.737, g: 0.769, b: 0.812 }; // light gray #BCC4CF
+
+  var t = figma.createText();
+  t.fontName = { family: "Inter", style: "Regular" };
+  t.fontSize = 11;
+  t.characters = page + "/" + totalPages;
+  t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+  parent.appendChild(t);
+  var textW = t.width;
+  var totalW = TRI_W + GAP + textW + GAP + TRI_W;
+
+  var startX;
+  if (align === "right") {
+    startX = legendLeftBound + legendWidth - totalW;
+  } else if (align === "center") {
+    startX = legendLeftBound + (legendWidth - totalW) / 2;
+  } else {
+    startX = legendLeftBound;
+  }
+
+  var up = figma.createVector();
+  up.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 " + TRI_H + " L " + (TRI_W / 2) + " 0 L " + TRI_W + " " + TRI_H + " Z" }];
+  up.x = startX;
+  up.y = pageY + 3;
+  up.fills = [{ type: "SOLID", color: (page > 1) ? ACCENT : DISABLED }];
+  up.strokes = [];
+  parent.appendChild(up);
+  nodes.push(up);
+
+  t.x = startX + TRI_W + GAP;
+  t.y = pageY;
+  nodes.push(t);
+
+  var down = figma.createVector();
+  down.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 0 L " + (TRI_W / 2) + " " + TRI_H + " L " + TRI_W + " 0 Z" }];
+  down.x = startX + TRI_W + GAP + textW + GAP;
+  down.y = pageY + 3;
+  down.fills = [{ type: "SOLID", color: (page < totalPages) ? ACCENT : DISABLED }];
+  down.strokes = [];
+  parent.appendChild(down);
+  nodes.push(down);
+
   return nodes;
 }

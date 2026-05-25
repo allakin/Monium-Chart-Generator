@@ -363,35 +363,58 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.resize(300, Math.min(msg.height, 900));
     return;
   }
-  if (msg.type !== "generate") return;
+  if (msg.type === "notify") {
+    figma.notify(msg.message);
+    return;
+  }
+  if (msg.type === "generate") { await renderChart(msg, null); return; }
+  if (msg.type === "paste") {
+    if (!msg.chartData) return;
+    await renderChart(msg.chartData, msg.chartData);
+    return;
+  }
+};
 
+async function renderChart(params, exactData) {
   await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-  var yValues = msg.yValues;
-  var xLabels = msg.xLabels;
-  var barsCount = msg.barsCount;
-  var orientation = msg.orientation || "vertical";
-  var barMode = msg.barMode || "normal";
-  var dense = msg.dense || false;
-  var barGap = (msg.barGap !== undefined) ? msg.barGap : 1;
-  var fillOpacity = (msg.fillOpacity !== undefined) ? msg.fillOpacity : 1;
+  var yValues = params.yValues;
+  var xLabels = params.xLabels;
+  var barsCount = params.barsCount;
+  var orientation = params.orientation || "vertical";
+  var barMode = params.barMode || "normal";
+  var dense = params.dense || false;
+  var barGap = (params.barGap !== undefined) ? params.barGap : 1;
+  var fillOpacity = (params.fillOpacity !== undefined) ? params.fillOpacity : 1;
   fillOpacity = Math.max(0.05, Math.min(1, fillOpacity));
-  var yUnit = msg.yUnit || "";
-  var topEvent = msg.topEvent || false;
-  var bottomEvent = msg.bottomEvent || false;
-  var replaceMode = msg.replace || false;
+  var yUnit = params.yUnit || "";
+  var topEvent = params.topEvent || false;
+  var bottomEvent = params.bottomEvent || false;
+  var replaceMode = exactData ? true : (params.replace || false);
 
   if (!yValues || yValues.length < 2) yValues = [0, 50, 100, 150, 200];
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!barsCount || barsCount < 1) barsCount = 2;
   if (barsCount > 20) barsCount = 20;
 
-  var chartParams = {
-    yValues: yValues, yUnit: yUnit, xLabels: xLabels,
-    barsCount: barsCount, orientation: orientation, barMode: barMode,
-    dense: dense, barGap: barGap, fillOpacity: fillOpacity,
-    topEvent: topEvent, bottomEvent: bottomEvent
-  };
+  // Legend params
+  var showLegend = (params.showLegend !== undefined)
+    ? !!params.showLegend
+    : ((params.legendLabels || []).length > 0);
+  var legendAlign = params.legendAlign || "left";
+  if (legendAlign !== "left" && legendAlign !== "center" && legendAlign !== "right") legendAlign = "left";
+  var legendLabels = (params.legendLabels || []).filter(function (s) { return s && String(s).length > 0; });
+  if (showLegend) {
+    if (legendLabels.length > barsCount) {
+      legendLabels = legendLabels.slice(0, barsCount);
+    } else {
+      for (var lpi = legendLabels.length; lpi < barsCount; lpi++) {
+        legendLabels.push("Series " + (lpi + 1));
+      }
+    }
+  } else {
+    legendLabels = [];
+  }
 
   var yMin = Math.min.apply(null, yValues);
   var yMax = Math.max.apply(null, yValues);
@@ -439,20 +462,25 @@ figma.ui.onmessage = async function (msg) {
     dataPointCount = categoriesCount * 10;
   }
 
-  var allSeries = [];
-  for (var li = 0; li < barsCount; li++) {
-    var vals = [];
-    for (var pi = 0; pi < dataPointCount; pi++) {
-      vals.push(yMin + Math.random() * (yMax - yMin));
+  var allSeries;
+  if (exactData && exactData.allSeries && exactData.allSeries.length === barsCount) {
+    allSeries = exactData.allSeries;
+  } else {
+    allSeries = [];
+    for (var li = 0; li < barsCount; li++) {
+      var vals = [];
+      for (var pi = 0; pi < dataPointCount; pi++) {
+        vals.push(yMin + Math.random() * (yMax - yMin));
+      }
+      allSeries.push(vals);
     }
-    allSeries.push(vals);
-  }
 
-  if (barMode === "stacked" && allSeries.length > 1) {
-    var scaleFactor = 1 / barsCount;
-    for (var si = 0; si < allSeries.length; si++) {
-      for (var pi = 0; pi < allSeries[si].length; pi++) {
-        allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
+    if (barMode === "stacked" && allSeries.length > 1) {
+      var scaleFactor = 1 / barsCount;
+      for (var si = 0; si < allSeries.length; si++) {
+        for (var pi = 0; pi < allSeries[si].length; pi++) {
+          allSeries[si][pi] = yMin + (allSeries[si][pi] - yMin) * scaleFactor;
+        }
       }
     }
   }
@@ -480,7 +508,33 @@ figma.ui.onmessage = async function (msg) {
   }
   var padLeft = maxLabelWidth + PAD_GAP + 2;
 
-  var plot = { x: padLeft, y: PAD_TOP, w: w - padLeft - PAD_RIGHT, h: h - PAD_TOP - PAD_BOTTOM };
+  // Pre-layout legend so plot height accounts for the actual rows/paginator.
+  // Legend extent matches the plot (Y-axis-grid) horizontal range — same for
+  // both vertical and horizontal orientations (legend always sits below).
+  var legendLeftBound = padLeft;
+  var legendWidth = w - padLeft - PAD_RIGHT;
+  var legendDisplayTexts = [];
+  var legendItemWidths = [];
+  var legendRows = [];
+  var legendTotalPages = 1;
+  var legendVisibleRows = 0;
+  var legendPaginated = false;
+  var legendBlockH = 0;
+  if (legendLabels.length > 0) {
+    var maxTextWidth = Math.max(20, legendWidth - LEGEND_DOT_SIZE - LEGEND_LINE_TEXT_GAP);
+    var measured = measureLegendItems(legendLabels, maxTextWidth);
+    legendDisplayTexts = measured.texts;
+    legendItemWidths = measured.widths;
+    legendRows = packLegendRows(legendItemWidths, legendWidth);
+    legendVisibleRows = Math.min(legendRows.length, LEGEND_MAX_ROWS_PER_PAGE);
+    legendPaginated = legendRows.length > LEGEND_MAX_ROWS_PER_PAGE;
+    legendTotalPages = Math.max(1, Math.ceil(legendRows.length / LEGEND_MAX_ROWS_PER_PAGE));
+    legendBlockH = legendVisibleRows * LEGEND_ROW_H + Math.max(0, legendVisibleRows - 1) * LEGEND_ROW_GAP;
+    if (legendPaginated) legendBlockH += 4 + 14;
+  }
+  var legendExtraBottom = (legendBlockH > 0) ? (legendBlockH + 8) : 0;
+
+  var plot = { x: padLeft, y: PAD_TOP, w: w - padLeft - PAD_RIGHT, h: h - PAD_TOP - PAD_BOTTOM - legendExtraBottom };
 
   var gridNodes, yLabelNodes, xLabelNodes;
   if (orientation === "vertical") {
@@ -493,7 +547,21 @@ figma.ui.onmessage = async function (msg) {
     xLabelNodes = drawValueLabelsBottom(container, plot, yValues, yMin, yMax, yUnit);
   }
 
-  var distinctColors = selectDistinctColors(barsCount);
+  var distinctColors;
+  if (exactData && exactData.colors && exactData.colors.length === barsCount) {
+    distinctColors = exactData.colors;
+  } else {
+    distinctColors = selectDistinctColors(barsCount);
+  }
+
+  var topEventSegments = null;
+  var bottomEventSegments = null;
+  if (topEvent) {
+    topEventSegments = (exactData && exactData.topEventSegments) ? exactData.topEventSegments : buildEventSegments("top");
+  }
+  if (bottomEvent) {
+    bottomEventSegments = (exactData && exactData.bottomEventSegments) ? exactData.bottomEventSegments : buildEventSegments("bottom");
+  }
 
   var barNodes = drawBars(container, plot, allSeries, yMin, yMax, barMode, orientation, distinctColors, dense, barGap, fillOpacity);
 
@@ -504,38 +572,60 @@ figma.ui.onmessage = async function (msg) {
   if (barNodes.length > 1) { var g = figma.group(barNodes, container); g.name = "Bars"; }
   else if (barNodes.length === 1) { barNodes[0].name = "Bars"; container.appendChild(barNodes[0]); }
 
-  if (topEvent) {
-    var evNodes = drawEventBar(container, plot, "top", xLabels.length);
+  if (topEvent && topEventSegments) {
+    var evNodes = drawEventSegments(container, plot, "top", topEventSegments);
     if (evNodes.length > 1) { var g = figma.group(evNodes, container); g.name = "Top Events"; }
   }
-  if (bottomEvent) {
-    var evNodes = drawEventBar(container, plot, "bottom", xLabels.length);
+  if (bottomEvent && bottomEventSegments) {
+    var evNodes = drawEventSegments(container, plot, "bottom", bottomEventSegments);
     if (evNodes.length > 1) { var g = figma.group(evNodes, container); g.name = "Bottom Events"; }
   }
 
+  if (legendLabels.length > 0 && legendRows.length > 0) {
+    var legendY = plot.y + plot.h + PAD_BOTTOM + 5;
+    var legendNodes = drawLegend(container, legendLeftBound, legendWidth, legendY, legendDisplayTexts, distinctColors, legendRows, legendItemWidths, 1, legendAlign);
+    if (legendNodes.length > 1) {
+      var legendGroup = figma.group(legendNodes, container);
+      legendGroup.name = "Legend";
+    }
+  }
+
+  var chartParams = {
+    yValues: yValues, yUnit: yUnit, xLabels: xLabels,
+    barsCount: barsCount, orientation: orientation, barMode: barMode,
+    dense: dense, barGap: barGap, fillOpacity: fillOpacity,
+    topEvent: topEvent, bottomEvent: bottomEvent,
+    showLegend: showLegend,
+    legendAlign: legendAlign,
+    legendLabels: legendLabels,
+    allSeries: allSeries,
+    colors: distinctColors,
+    topEventSegments: topEventSegments,
+    bottomEventSegments: bottomEventSegments
+  };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
 
   if (reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (replaceMode && target) {
     target.appendChild(container);
     container.x = oldX; container.y = oldY;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify("Chart regenerated!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Chart regenerated!");
   } else if (target) {
     target.appendChild(container);
     container.x = 0; container.y = 0;
     figma.viewport.scrollAndZoomIntoView([target]);
-    figma.notify('Chart added to "' + target.name + '"');
+    figma.notify(exactData ? 'Exact copy pasted to "' + target.name + '"' : 'Chart added to "' + target.name + '"');
   } else {
     figma.currentPage.appendChild(container);
     figma.viewport.scrollAndZoomIntoView([container]);
-    figma.notify("Bar chart created!");
+    figma.notify(exactData ? "Exact copy pasted!" : "Bar chart created!");
   }
 
   sendSelection();
-};
+}
 
 // ─── Grid (vertical orientation) ────────────────────────────
 function drawGridVertical(parent, p, yValues, xLabels, dataPointCount) {
@@ -828,28 +918,221 @@ var BOTTOM_EVENT_COLORS = [
 ];
 var BAR_HEIGHT = 6;
 
-function drawEventBar(parent, p, position, pointCount) {
-  var nodes = [];
-  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
-  var totalW = p.w;
-  var x = p.x;
-  var endX = p.x + totalW;
+function buildEventSegments(position) {
+  var segments = [];
+  var segMinW = 0.02;
+  var segMaxW = 0.08;
+  var gapMinW = 0.005;
+  var gapMaxW = 0.04;
+  var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
 
-  while (x < endX) {
-    x += totalW * 0.005 + Math.random() * totalW * 0.035;
-    if (x >= endX) break;
-    var segW = totalW * 0.02 + Math.random() * totalW * 0.06;
-    if (x + segW > endX) segW = endX - x;
-    if (segW < 1) break;
-    var palette = (position === "top") ? TOP_EVENT_COLORS : BOTTOM_EVENT_COLORS;
+  var x = 0;
+  while (x < 1) {
+    var gap = gapMinW + Math.random() * (gapMaxW - gapMinW);
+    x += gap;
+    if (x >= 1) break;
+
+    var segW = segMinW + Math.random() * (segMaxW - segMinW);
+    if (x + segW > 1) segW = 1 - x;
+    if (segW < 0.001) break;
+
     var color = palette[Math.floor(Math.random() * palette.length)];
-    var rect = figma.createRectangle();
-    rect.x = x; rect.y = y;
-    rect.resize(segW, BAR_HEIGHT);
-    rect.fills = [{ type: "SOLID", color: color, opacity: 0.4 + Math.random() * 0.6 }];
-    parent.appendChild(rect);
-    nodes.push(rect);
+    var opacity = 0.4 + Math.random() * 0.6;
+
+    segments.push({ x: x, w: segW, color: color, opacity: opacity });
     x += segW;
   }
+  return segments;
+}
+
+function drawEventSegments(parent, p, position, segments) {
+  var y = (position === "top") ? p.y - BAR_HEIGHT - 2 : p.y + p.h + 1;
+  var nodes = [];
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
+    var rect = figma.createRectangle();
+    rect.x = p.x + s.x * p.w;
+    rect.y = y;
+    rect.resize(s.w * p.w, BAR_HEIGHT);
+    rect.fills = [{ type: "SOLID", color: s.color, opacity: s.opacity }];
+    parent.appendChild(rect);
+    nodes.push(rect);
+  }
+  return nodes;
+}
+
+// ─── Legend ─────────────────────────────────────────────────
+var LEGEND_DOT_SIZE = 8;
+var LEGEND_LINE_TEXT_GAP = 6;
+var LEGEND_ITEM_GAP = 12;
+var LEGEND_ROW_H = 14;
+var LEGEND_ROW_GAP = 2;
+var LEGEND_MAX_ROWS_PER_PAGE = 3;
+
+// Measure legend labels, truncating with ellipsis when a label exceeds maxTextWidth.
+function measureLegendItems(labels, maxTextWidth) {
+  var texts = [];
+  var widths = [];
+  for (var i = 0; i < labels.length; i++) {
+    var label = labels[i] || " ";
+    var t = figma.createText();
+    t.fontName = { family: "Inter", style: "Regular" };
+    t.fontSize = 11;
+    t.characters = label;
+    if (t.width <= maxTextWidth) {
+      widths.push(t.width);
+      texts.push(label);
+      t.remove();
+      continue;
+    }
+    var lo = 0, hi = label.length;
+    while (lo < hi) {
+      var mid = Math.floor((lo + hi + 1) / 2);
+      t.characters = label.substring(0, mid) + "…";
+      if (t.width <= maxTextWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    var truncated = label.substring(0, lo) + "…";
+    t.characters = truncated;
+    widths.push(t.width);
+    texts.push(truncated);
+    t.remove();
+  }
+  return { texts: texts, widths: widths };
+}
+
+function packLegendRows(widths, availableWidth) {
+  var rows = [];
+  var current = [];
+  var currentW = 0;
+  for (var i = 0; i < widths.length; i++) {
+    var itemW = LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[i];
+    if (current.length === 0) {
+      current.push(i);
+      currentW = itemW;
+    } else {
+      var withGap = currentW + LEGEND_ITEM_GAP + itemW;
+      if (withGap > availableWidth) {
+        rows.push(current);
+        current = [i];
+        currentW = itemW;
+      } else {
+        current.push(i);
+        currentW = withGap;
+      }
+    }
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+
+function drawLegend(parent, legendLeftBound, legendWidth, legendY, labels, colors, rows, widths, page, align) {
+  var nodes = [];
+  var totalPages = Math.max(1, Math.ceil(rows.length / LEGEND_MAX_ROWS_PER_PAGE));
+  var currentPage = Math.max(1, Math.min(page || 1, totalPages));
+  var firstRow = (currentPage - 1) * LEGEND_MAX_ROWS_PER_PAGE;
+  var lastRow = Math.min(firstRow + LEGEND_MAX_ROWS_PER_PAGE, rows.length);
+
+  for (var ri = firstRow; ri < lastRow; ri++) {
+    var rowIdxs = rows[ri];
+    var rowTotalW = 0;
+    for (var k = 0; k < rowIdxs.length; k++) {
+      rowTotalW += LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[rowIdxs[k]];
+      if (k < rowIdxs.length - 1) rowTotalW += LEGEND_ITEM_GAP;
+    }
+    var rowStartX;
+    if (align === "right") {
+      rowStartX = legendLeftBound + legendWidth - rowTotalW;
+    } else if (align === "center") {
+      rowStartX = legendLeftBound + (legendWidth - rowTotalW) / 2;
+    } else {
+      rowStartX = legendLeftBound;
+    }
+    var rowY = legendY + (ri - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var x = rowStartX;
+
+    for (var k = 0; k < rowIdxs.length; k++) {
+      var idx = rowIdxs[k];
+      var color = colors[idx % colors.length];
+
+      var dot = figma.createEllipse();
+      dot.x = x;
+      dot.y = rowY + (LEGEND_ROW_H - LEGEND_DOT_SIZE) / 2;
+      dot.resize(LEGEND_DOT_SIZE, LEGEND_DOT_SIZE);
+      dot.fills = [{ type: "SOLID", color: color }];
+      dot.strokes = [];
+      parent.appendChild(dot);
+      nodes.push(dot);
+
+      var t = figma.createText();
+      t.fontName = { family: "Inter", style: "Regular" };
+      t.fontSize = 11;
+      t.characters = labels[idx];
+      t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+      t.x = x + LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP;
+      t.y = rowY;
+      parent.appendChild(t);
+      nodes.push(t);
+
+      x += LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[idx] + LEGEND_ITEM_GAP;
+    }
+  }
+
+  if (rows.length > LEGEND_MAX_ROWS_PER_PAGE) {
+    var pageY = legendY + (lastRow - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var paginatorNodes = drawPaginator(parent, legendLeftBound, legendWidth, pageY, currentPage, totalPages, align);
+    for (var i = 0; i < paginatorNodes.length; i++) nodes.push(paginatorNodes[i]);
+  }
+  return nodes;
+}
+
+function drawPaginator(parent, legendLeftBound, legendWidth, pageY, page, totalPages, align) {
+  var nodes = [];
+  var TRI_W = 10;
+  var TRI_H = 8;
+  var GAP = 4;
+  var ACCENT = { r: 0.078, g: 0.176, b: 0.435 };
+  var DISABLED = { r: 0.737, g: 0.769, b: 0.812 };
+
+  var t = figma.createText();
+  t.fontName = { family: "Inter", style: "Regular" };
+  t.fontSize = 11;
+  t.characters = page + "/" + totalPages;
+  t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+  parent.appendChild(t);
+  var textW = t.width;
+  var totalW = TRI_W + GAP + textW + GAP + TRI_W;
+
+  var startX;
+  if (align === "right") {
+    startX = legendLeftBound + legendWidth - totalW;
+  } else if (align === "center") {
+    startX = legendLeftBound + (legendWidth - totalW) / 2;
+  } else {
+    startX = legendLeftBound;
+  }
+
+  var up = figma.createVector();
+  up.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 " + TRI_H + " L " + (TRI_W / 2) + " 0 L " + TRI_W + " " + TRI_H + " Z" }];
+  up.x = startX;
+  up.y = pageY + 3;
+  up.fills = [{ type: "SOLID", color: (page > 1) ? ACCENT : DISABLED }];
+  up.strokes = [];
+  parent.appendChild(up);
+  nodes.push(up);
+
+  t.x = startX + TRI_W + GAP;
+  t.y = pageY;
+  nodes.push(t);
+
+  var down = figma.createVector();
+  down.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 0 L " + (TRI_W / 2) + " " + TRI_H + " L " + TRI_W + " 0 Z" }];
+  down.x = startX + TRI_W + GAP + textW + GAP;
+  down.y = pageY + 3;
+  down.fills = [{ type: "SOLID", color: (page < totalPages) ? ACCENT : DISABLED }];
+  down.strokes = [];
+  parent.appendChild(down);
+  nodes.push(down);
+
   return nodes;
 }
