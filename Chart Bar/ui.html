@@ -14,6 +14,7 @@
     }
     h2 { font-size: 15px; font-weight: 600; }
     .subtitle { font-size: 11px; color: #808080; }
+    .subtitle a { color: inherit; text-decoration: underline; }
 
     .target-bar {
       background: #EEEEF0;
@@ -218,7 +219,7 @@
 <body>
   <div>
     <h2>Chart Bar Generator</h2>
-    <p class="subtitle">Monium Design System</p>
+    <p class="subtitle">Monium Design System · <a href="https://github.com/allakin/Monium-Chart-Generator/wiki" target="_blank" rel="noopener">Documentation</a></p>
   </div>
 
   <div class="target-bar" id="targetBar">
@@ -349,7 +350,7 @@
 
   <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
 
-  <div class="footer">Monium Design System v1.0</div>
+  <div class="footer">Monium Design System v2.1</div>
 
   <script>
     var DEFAULTS = {

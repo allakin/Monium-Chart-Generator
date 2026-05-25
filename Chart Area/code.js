@@ -129,6 +129,13 @@ var PAD_GAP = 8;
 
 var CHART_NAME = "Chart Area";
 
+// ─── Format Y axis value (preserves decimals) ───────────────
+function formatYValue(v) {
+  if (typeof v !== "number" || isNaN(v)) return String(v);
+  if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+  return parseFloat(v.toFixed(4)).toString();
+}
+
 // ─── Selection tracking ─────────────────────────────────────
 var lastSelectedFrameId = null;
 
@@ -515,7 +522,7 @@ async function renderChart(params, exactData) {
     var measure = figma.createText();
     measure.fontName = { family: "Inter", style: "Regular" };
     measure.fontSize = 11;
-    measure.characters = String(Math.round(yValues[mi])) + (yUnit ? yUnit : "");
+    measure.characters = formatYValue(yValues[mi]) + (yUnit ? yUnit : "");
     if (measure.width > maxLabelWidth) maxLabelWidth = measure.width;
     measure.remove();
   }
@@ -655,7 +662,7 @@ function drawYLabels(parent, p, yValues, yMin, yMax, yUnit) {
     var y = p.y + p.h - ratio * p.h - 7;
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
-    t.characters = String(Math.round(yValues[i])) + suffix;
+    t.characters = formatYValue(yValues[i]) + suffix;
     t.fontSize = 11;
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     t.y = y; parent.appendChild(t);

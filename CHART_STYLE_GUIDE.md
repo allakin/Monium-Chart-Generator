@@ -131,6 +131,7 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 - Y axis labels: right-aligned, `8px` gap to grid lines, vertically centered on grid line (`-7px` offset)
 - X axis labels: first left-aligned, last right-aligned, middle centered. `6px` below plot area
 - Left padding: dynamic — measured from widest Y label + 8px gap + 2px
+- **Y axis value formatting:** NEVER round values that come from the **"Y axis — values (comma-separated)"** input. Whatever the user types in that field must reach the canvas verbatim — integers as integers, decimals as decimals. The input is parsed with `parseFloat`, so `0, 0.4, 0.8, 1.2, 1.6` arrives as `[0, 0.4, 0.8, 1.2, 1.6]`; passing these through `Math.round` collapses them to `0, 0, 1, 1, 2` and the rendered Y axis no longer matches the input. Use the `formatYValue(v)` helper (see "Y Axis Value Formatting" in Figma Plugin Code Patterns) for every text label that displays a Y / slice / total value, and also when **measuring** the widest label for dynamic left padding — otherwise the padding will be undersized when decimals expand the label width. The same no-rounding rule applies to the Pie plugin's "Values (comma-separated)" input — slice value labels and the center total must preserve decimals from the input
 
 ### Layout / Padding
 - `PAD_TOP = 10px` — top edge to plot area
@@ -268,6 +269,9 @@ font-size: 12px;
 focus border-color: #4D7CFE;
 ```
 
+#### "Y axis — values (comma-separated)" field — DO NOT round
+This field is the source of truth for the Y axis. Values are parsed with `parseFloat` and MUST be drawn on the canvas with their original precision — no `Math.round`, no `parseInt`, no `Math.floor/ceil`. If the user types `0, 0.4, 0.8, 1.2, 1.6`, the rendered Y axis must read `0, 0.4, 0.8, 1.2, 1.6` (not `0, 0, 1, 1, 2`). The same rule applies to the Pie plugin's "Values (comma-separated)" field and to its center-total label. Always render through `formatYValue(v)` (see [Y Axis Value Formatting](#y-axis-value-formatting--formatyvaluev) in Figma Plugin Code Patterns).
+
 ### Radio Buttons (e.g. Line Style)
 ```css
 background: #EEEEF0; color: #808080; border-radius: 6px;
@@ -309,8 +313,22 @@ active: background: #4D7CFE; color: #fff;
 - `16px` between all sections (fields, groups, buttons)
 
 ### Footer
-- `"Monium Design System v1.0"`
+- `"Monium Design System v2.1"` — plain text, no link
 - `font-size: 10px; color: #AAAAAA; text-align: center`
+
+### Header Subtitle — brand + Documentation link
+- Rendered as `<p class="subtitle">` directly under the plugin `<h2>` title
+- The brand text **"Monium Design System"** stays as plain text — **do not** wrap it in a link
+- A separate **"Documentation"** item is appended after the brand, separated by ` · ` (middle dot, U+00B7) with spaces on both sides
+- The "Documentation" word is an anchor pointing to `https://github.com/allakin/Monium-Chart-Generator/wiki`, opened in a new tab (`target="_blank" rel="noopener"`)
+- Styling: link inherits the subtitle color (`#808080`) and is **always underlined** so it's recognisable as a link without hover
+```css
+.subtitle { font-size: 11px; color: #808080; }
+.subtitle a { color: inherit; text-decoration: underline; }
+```
+```html
+<p class="subtitle">Monium Design System · <a href="https://github.com/allakin/Monium-Chart-Generator/wiki" target="_blank" rel="noopener">Documentation</a></p>
+```
 
 ### Dynamic Plugin Window Height
 Plugin height adapts to content automatically. No fixed height values.
@@ -1149,14 +1167,36 @@ function sendSelection() {
 }
 ```
 
+### Y Axis Value Formatting — `formatYValue(v)`
+The Y values input accepts decimals (e.g. `0, 0.4, 0.8, 1.2, 1.6`). All visible value labels — Y axis labels, X axis value labels (horizontal bar), pie slice values, pie center total — MUST be formatted with `formatYValue` instead of `Math.round`. Otherwise decimal values are truncated (`0.4 → 0`, `0.8 → 1`, `1.2 → 1`, `1.6 → 2`) and the chart's Y axis no longer matches what the user typed.
+
+```js
+function formatYValue(v) {
+  if (typeof v !== "number" || isNaN(v)) return String(v);
+  // Integer values stay integer-clean ("100" not "100.0")
+  if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+  // Decimals: cap at 4 digits, drop trailing zeros via parseFloat round-trip
+  return parseFloat(v.toFixed(4)).toString();
+}
+```
+
+Apply it everywhere Y / slice / total values are rendered as text:
+```js
+t.characters = formatYValue(yValues[i]) + suffix;     // Y axis labels
+t.characters = formatYValue(yValues[i]) + suffix;     // X axis value labels (horizontal bar)
+t.characters = formatYValue(values[i]);               // Pie slice value labels
+t.characters = formatYValue(total);                   // Pie center total
+```
+
 ### Dynamic Left Padding (measure Y labels)
+Measurement MUST use the same formatter that renders the labels — otherwise rounded measurement produces narrower text than the actual decimal label, and `padLeft` clips the leftmost digit.
 ```js
 var maxLabelWidth = 0;
 for (var mi = 0; mi < yValues.length; mi++) {
   var measure = figma.createText();
   measure.fontName = { family: "Inter", style: "Regular" };
   measure.fontSize = 11;
-  measure.characters = String(Math.round(yValues[mi])) + suffix;
+  measure.characters = formatYValue(yValues[mi]) + suffix;
   if (measure.width > maxLabelWidth) maxLabelWidth = measure.width;
   measure.remove();
 }
