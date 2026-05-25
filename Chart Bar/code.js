@@ -397,6 +397,25 @@ async function renderChart(params, exactData) {
   if (!barsCount || barsCount < 1) barsCount = 2;
   if (barsCount > 20) barsCount = 20;
 
+  // Legend params
+  var showLegend = (params.showLegend !== undefined)
+    ? !!params.showLegend
+    : ((params.legendLabels || []).length > 0);
+  var legendAlign = params.legendAlign || "left";
+  if (legendAlign !== "left" && legendAlign !== "center" && legendAlign !== "right") legendAlign = "left";
+  var legendLabels = (params.legendLabels || []).filter(function (s) { return s && String(s).length > 0; });
+  if (showLegend) {
+    if (legendLabels.length > barsCount) {
+      legendLabels = legendLabels.slice(0, barsCount);
+    } else {
+      for (var lpi = legendLabels.length; lpi < barsCount; lpi++) {
+        legendLabels.push("Series " + (lpi + 1));
+      }
+    }
+  } else {
+    legendLabels = [];
+  }
+
   var yMin = Math.min.apply(null, yValues);
   var yMax = Math.max.apply(null, yValues);
   if (yMin === yMax) yMax = yMin + 100;
@@ -489,7 +508,33 @@ async function renderChart(params, exactData) {
   }
   var padLeft = maxLabelWidth + PAD_GAP + 2;
 
-  var plot = { x: padLeft, y: PAD_TOP, w: w - padLeft - PAD_RIGHT, h: h - PAD_TOP - PAD_BOTTOM };
+  // Pre-layout legend so plot height accounts for the actual rows/paginator.
+  // Legend extent matches the plot (Y-axis-grid) horizontal range — same for
+  // both vertical and horizontal orientations (legend always sits below).
+  var legendLeftBound = padLeft;
+  var legendWidth = w - padLeft - PAD_RIGHT;
+  var legendDisplayTexts = [];
+  var legendItemWidths = [];
+  var legendRows = [];
+  var legendTotalPages = 1;
+  var legendVisibleRows = 0;
+  var legendPaginated = false;
+  var legendBlockH = 0;
+  if (legendLabels.length > 0) {
+    var maxTextWidth = Math.max(20, legendWidth - LEGEND_DOT_SIZE - LEGEND_LINE_TEXT_GAP);
+    var measured = measureLegendItems(legendLabels, maxTextWidth);
+    legendDisplayTexts = measured.texts;
+    legendItemWidths = measured.widths;
+    legendRows = packLegendRows(legendItemWidths, legendWidth);
+    legendVisibleRows = Math.min(legendRows.length, LEGEND_MAX_ROWS_PER_PAGE);
+    legendPaginated = legendRows.length > LEGEND_MAX_ROWS_PER_PAGE;
+    legendTotalPages = Math.max(1, Math.ceil(legendRows.length / LEGEND_MAX_ROWS_PER_PAGE));
+    legendBlockH = legendVisibleRows * LEGEND_ROW_H + Math.max(0, legendVisibleRows - 1) * LEGEND_ROW_GAP;
+    if (legendPaginated) legendBlockH += 4 + 14;
+  }
+  var legendExtraBottom = (legendBlockH > 0) ? (legendBlockH + 8) : 0;
+
+  var plot = { x: padLeft, y: PAD_TOP, w: w - padLeft - PAD_RIGHT, h: h - PAD_TOP - PAD_BOTTOM - legendExtraBottom };
 
   var gridNodes, yLabelNodes, xLabelNodes;
   if (orientation === "vertical") {
@@ -536,11 +581,23 @@ async function renderChart(params, exactData) {
     if (evNodes.length > 1) { var g = figma.group(evNodes, container); g.name = "Bottom Events"; }
   }
 
+  if (legendLabels.length > 0 && legendRows.length > 0) {
+    var legendY = plot.y + plot.h + PAD_BOTTOM + 5;
+    var legendNodes = drawLegend(container, legendLeftBound, legendWidth, legendY, legendDisplayTexts, distinctColors, legendRows, legendItemWidths, 1, legendAlign);
+    if (legendNodes.length > 1) {
+      var legendGroup = figma.group(legendNodes, container);
+      legendGroup.name = "Legend";
+    }
+  }
+
   var chartParams = {
     yValues: yValues, yUnit: yUnit, xLabels: xLabels,
     barsCount: barsCount, orientation: orientation, barMode: barMode,
     dense: dense, barGap: barGap, fillOpacity: fillOpacity,
     topEvent: topEvent, bottomEvent: bottomEvent,
+    showLegend: showLegend,
+    legendAlign: legendAlign,
+    legendLabels: legendLabels,
     allSeries: allSeries,
     colors: distinctColors,
     topEventSegments: topEventSegments,
@@ -901,5 +958,181 @@ function drawEventSegments(parent, p, position, segments) {
     parent.appendChild(rect);
     nodes.push(rect);
   }
+  return nodes;
+}
+
+// ─── Legend ─────────────────────────────────────────────────
+var LEGEND_DOT_SIZE = 8;
+var LEGEND_LINE_TEXT_GAP = 6;
+var LEGEND_ITEM_GAP = 12;
+var LEGEND_ROW_H = 14;
+var LEGEND_ROW_GAP = 2;
+var LEGEND_MAX_ROWS_PER_PAGE = 3;
+
+// Measure legend labels, truncating with ellipsis when a label exceeds maxTextWidth.
+function measureLegendItems(labels, maxTextWidth) {
+  var texts = [];
+  var widths = [];
+  for (var i = 0; i < labels.length; i++) {
+    var label = labels[i] || " ";
+    var t = figma.createText();
+    t.fontName = { family: "Inter", style: "Regular" };
+    t.fontSize = 11;
+    t.characters = label;
+    if (t.width <= maxTextWidth) {
+      widths.push(t.width);
+      texts.push(label);
+      t.remove();
+      continue;
+    }
+    var lo = 0, hi = label.length;
+    while (lo < hi) {
+      var mid = Math.floor((lo + hi + 1) / 2);
+      t.characters = label.substring(0, mid) + "…";
+      if (t.width <= maxTextWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    var truncated = label.substring(0, lo) + "…";
+    t.characters = truncated;
+    widths.push(t.width);
+    texts.push(truncated);
+    t.remove();
+  }
+  return { texts: texts, widths: widths };
+}
+
+function packLegendRows(widths, availableWidth) {
+  var rows = [];
+  var current = [];
+  var currentW = 0;
+  for (var i = 0; i < widths.length; i++) {
+    var itemW = LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[i];
+    if (current.length === 0) {
+      current.push(i);
+      currentW = itemW;
+    } else {
+      var withGap = currentW + LEGEND_ITEM_GAP + itemW;
+      if (withGap > availableWidth) {
+        rows.push(current);
+        current = [i];
+        currentW = itemW;
+      } else {
+        current.push(i);
+        currentW = withGap;
+      }
+    }
+  }
+  if (current.length > 0) rows.push(current);
+  return rows;
+}
+
+function drawLegend(parent, legendLeftBound, legendWidth, legendY, labels, colors, rows, widths, page, align) {
+  var nodes = [];
+  var totalPages = Math.max(1, Math.ceil(rows.length / LEGEND_MAX_ROWS_PER_PAGE));
+  var currentPage = Math.max(1, Math.min(page || 1, totalPages));
+  var firstRow = (currentPage - 1) * LEGEND_MAX_ROWS_PER_PAGE;
+  var lastRow = Math.min(firstRow + LEGEND_MAX_ROWS_PER_PAGE, rows.length);
+
+  for (var ri = firstRow; ri < lastRow; ri++) {
+    var rowIdxs = rows[ri];
+    var rowTotalW = 0;
+    for (var k = 0; k < rowIdxs.length; k++) {
+      rowTotalW += LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[rowIdxs[k]];
+      if (k < rowIdxs.length - 1) rowTotalW += LEGEND_ITEM_GAP;
+    }
+    var rowStartX;
+    if (align === "right") {
+      rowStartX = legendLeftBound + legendWidth - rowTotalW;
+    } else if (align === "center") {
+      rowStartX = legendLeftBound + (legendWidth - rowTotalW) / 2;
+    } else {
+      rowStartX = legendLeftBound;
+    }
+    var rowY = legendY + (ri - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var x = rowStartX;
+
+    for (var k = 0; k < rowIdxs.length; k++) {
+      var idx = rowIdxs[k];
+      var color = colors[idx % colors.length];
+
+      var dot = figma.createEllipse();
+      dot.x = x;
+      dot.y = rowY + (LEGEND_ROW_H - LEGEND_DOT_SIZE) / 2;
+      dot.resize(LEGEND_DOT_SIZE, LEGEND_DOT_SIZE);
+      dot.fills = [{ type: "SOLID", color: color }];
+      dot.strokes = [];
+      parent.appendChild(dot);
+      nodes.push(dot);
+
+      var t = figma.createText();
+      t.fontName = { family: "Inter", style: "Regular" };
+      t.fontSize = 11;
+      t.characters = labels[idx];
+      t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+      t.x = x + LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP;
+      t.y = rowY;
+      parent.appendChild(t);
+      nodes.push(t);
+
+      x += LEGEND_DOT_SIZE + LEGEND_LINE_TEXT_GAP + widths[idx] + LEGEND_ITEM_GAP;
+    }
+  }
+
+  if (rows.length > LEGEND_MAX_ROWS_PER_PAGE) {
+    var pageY = legendY + (lastRow - firstRow) * (LEGEND_ROW_H + LEGEND_ROW_GAP);
+    var paginatorNodes = drawPaginator(parent, legendLeftBound, legendWidth, pageY, currentPage, totalPages, align);
+    for (var i = 0; i < paginatorNodes.length; i++) nodes.push(paginatorNodes[i]);
+  }
+  return nodes;
+}
+
+function drawPaginator(parent, legendLeftBound, legendWidth, pageY, page, totalPages, align) {
+  var nodes = [];
+  var TRI_W = 10;
+  var TRI_H = 8;
+  var GAP = 4;
+  var ACCENT = { r: 0.078, g: 0.176, b: 0.435 };
+  var DISABLED = { r: 0.737, g: 0.769, b: 0.812 };
+
+  var t = figma.createText();
+  t.fontName = { family: "Inter", style: "Regular" };
+  t.fontSize = 11;
+  t.characters = page + "/" + totalPages;
+  t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
+  parent.appendChild(t);
+  var textW = t.width;
+  var totalW = TRI_W + GAP + textW + GAP + TRI_W;
+
+  var startX;
+  if (align === "right") {
+    startX = legendLeftBound + legendWidth - totalW;
+  } else if (align === "center") {
+    startX = legendLeftBound + (legendWidth - totalW) / 2;
+  } else {
+    startX = legendLeftBound;
+  }
+
+  var up = figma.createVector();
+  up.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 " + TRI_H + " L " + (TRI_W / 2) + " 0 L " + TRI_W + " " + TRI_H + " Z" }];
+  up.x = startX;
+  up.y = pageY + 3;
+  up.fills = [{ type: "SOLID", color: (page > 1) ? ACCENT : DISABLED }];
+  up.strokes = [];
+  parent.appendChild(up);
+  nodes.push(up);
+
+  t.x = startX + TRI_W + GAP;
+  t.y = pageY;
+  nodes.push(t);
+
+  var down = figma.createVector();
+  down.vectorPaths = [{ windingRule: "NONZERO", data: "M 0 0 L " + (TRI_W / 2) + " " + TRI_H + " L " + TRI_W + " 0 Z" }];
+  down.x = startX + TRI_W + GAP + textW + GAP;
+  down.y = pageY + 3;
+  down.fills = [{ type: "SOLID", color: (page < totalPages) ? ACCENT : DISABLED }];
+  down.strokes = [];
+  parent.appendChild(down);
+  nodes.push(down);
+
   return nodes;
 }

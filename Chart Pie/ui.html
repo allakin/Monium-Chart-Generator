@@ -123,7 +123,8 @@
     .field { margin-top: 16px; }
     .field label { display: block; font-size: 11px; color: #808080; margin-bottom: 4px; }
     .field input[type="text"],
-    .field input[type="number"] {
+    .field input[type="number"],
+    .field textarea {
       width: 100%;
       padding: 7px 10px;
       border: 1.5px solid #E0E0E0;
@@ -134,8 +135,16 @@
       outline: none;
       transition: border-color 0.15s;
     }
-    .field input:focus { border-color: #4D7CFE; }
-    .field input::placeholder { color: #AAAAAA; }
+    .field textarea {
+      resize: none;
+      overflow: hidden;
+      line-height: 1.4;
+      display: block;
+    }
+    .field input:focus,
+    .field textarea:focus { border-color: #4D7CFE; }
+    .field input::placeholder,
+    .field textarea::placeholder { color: #AAAAAA; }
 
     .radio-group {
       display: flex; gap: 6px;
@@ -235,12 +244,41 @@
 
   <div class="field">
     <label>Values (comma-separated, leave empty for random)</label>
-    <input type="text" id="valuesInput" placeholder="e.g. 660, 150, 142, 122, 5, 15" value="">
+    <textarea id="valuesInput" rows="1" placeholder="e.g. 660, 150, 142, 122, 5, 15"></textarea>
   </div>
 
   <div class="field" id="segmentsRow">
     <label>Segments count (1–20)</label>
     <input type="number" id="segmentsInput" value="5" min="1" max="20">
+  </div>
+
+  <div class="field">
+    <label>Legend</label>
+    <div class="checkbox-group">
+      <label class="checkbox-row">
+        <input type="checkbox" id="showLegendCheck"> Show legend
+      </label>
+    </div>
+  </div>
+
+  <div class="field" id="legendLabelsField" style="display: none;">
+    <label>Legend labels (comma-separated; missing entries auto-named "Series N")</label>
+    <textarea id="legendInput" rows="1" placeholder="e.g. AutocompleteKeys, GenerateYQL, SearchLogs"></textarea>
+  </div>
+
+  <div class="field" id="legendAlignField" style="display: none;">
+    <label>Legend align</label>
+    <div class="radio-group" id="legendAlignGroup">
+      <label class="radio-option active" data-value="left">
+        <input type="radio" name="legendAlign" value="left" checked> Left
+      </label>
+      <label class="radio-option" data-value="center">
+        <input type="radio" name="legendAlign" value="center"> Center
+      </label>
+      <label class="radio-option" data-value="right">
+        <input type="radio" name="legendAlign" value="right"> Right
+      </label>
+    </div>
   </div>
 
   <div class="field">
@@ -295,6 +333,7 @@
     var storedChartData = null;
     var replaceMode = false;
     var copiedChart = null;
+    var pendingPasteData = null;
 
     function setInsertEnabled(enabled) {
       document.getElementById('insertBtn').disabled = !enabled;
@@ -334,6 +373,10 @@
         type: 'paste',
         chartData: copiedChart
       }}, '*');
+      // After the plugin renders the chart it will sendSelection back.
+      // The next selection update should auto-populate the form (same UX as
+      // clicking "Get values from chart") so the user can immediately edit.
+      pendingPasteData = copiedChart;
     }
 
     function clearCopy() {
@@ -378,7 +421,20 @@
       segRow.style.display = hasValues ? 'none' : '';
     }
 
-    // Radio toggle for style group
+    // Reusable radio group binding
+    function bindRadioGroup(groupId) {
+      document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function (opt) {
+        opt.addEventListener('click', function () {
+          document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function (o) {
+            o.classList.remove('active');
+          });
+          opt.classList.add('active');
+          opt.querySelector('input').checked = true;
+        });
+      });
+    }
+
+    // Radio toggle for style group — also fires the donut-only visibility refresh
     document.querySelectorAll('#styleGroup .radio-option').forEach(function(opt) {
       opt.addEventListener('click', function() {
         document.querySelectorAll('#styleGroup .radio-option').forEach(function(o) { o.classList.remove('active'); });
@@ -387,11 +443,7 @@
         updateDonutVisibility();
       });
     });
-
-    document.getElementById('valuesInput').addEventListener('input', updateSegmentsVisibility);
-
-    updateDonutVisibility();
-    updateSegmentsVisibility();
+    bindRadioGroup('legendAlignGroup');
 
     function setRadio(groupId, val) {
       document.querySelectorAll('#' + groupId + ' .radio-option').forEach(function(o) {
@@ -403,16 +455,82 @@
       });
     }
 
-    function regenerate() {
-      hideRegenError();
-      if (!storedChartData) {
-        showRegenError('Failed to get data: no chart found in selected frame');
-        return;
-      }
-      var d = storedChartData;
+    function getLegendAlign() {
+      var checked = document.querySelector('input[name="legendAlign"]:checked');
+      return checked ? checked.value : 'left';
+    }
+    function setLegendAlign(val) { setRadio('legendAlignGroup', val); }
 
+    function autoResize(el) {
+      if (!el || el.offsetParent === null) return; // hidden — scrollHeight is unreliable
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    }
+    function autoResizeLegendInput() { autoResize(document.getElementById('legendInput')); }
+
+    ['valuesInput', 'legendInput'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', function () { autoResize(el); });
+        autoResize(el);
+      }
+    });
+
+    function updateLegendFieldsVisibility() {
+      var on = document.getElementById('showLegendCheck').checked;
+      document.getElementById('legendLabelsField').style.display = on ? 'block' : 'none';
+      document.getElementById('legendAlignField').style.display = on ? 'block' : 'none';
+      if (on) autoResizeLegendInput();
+    }
+
+    document.getElementById('showLegendCheck').addEventListener('change', function () {
+      updateLegendFieldsVisibility();
+      // When enabling the legend, pre-fill labels with "Series N" defaults for any
+      // missing positions based on the current segments count (derived from values
+      // if non-empty, else segmentsInput). Existing labels are preserved.
+      syncLegendLabelsToCount();
+      resizeUI();
+    });
+
+    // For Pie: effective series count comes from values.length if any, else segmentsInput.
+    function getEffectiveSegmentsCount() {
+      var valsRaw = document.getElementById('valuesInput').value.trim();
+      var vals = valsRaw
+        ? valsRaw.split(',').map(function (s) { return parseFloat(s.trim()); }).filter(function (n) { return !isNaN(n); })
+        : [];
+      if (vals.length > 0) return Math.min(20, vals.length);
+      return Math.max(1, Math.min(20, parseInt(document.getElementById('segmentsInput').value) || 5));
+    }
+
+    function syncLegendLabelsToCount() {
+      if (!document.getElementById('showLegendCheck').checked) return;
+      var newCount = getEffectiveSegmentsCount();
+      var legendEl = document.getElementById('legendInput');
+      var labels = legendEl.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+      if (newCount > labels.length) {
+        for (var i = labels.length; i < newCount; i++) labels.push('Series ' + (i + 1));
+      } else if (newCount < labels.length) {
+        labels = labels.slice(0, newCount);
+      }
+      legendEl.value = labels.join(', ');
+      autoResize(legendEl);
+    }
+
+    // 'change' (not 'input'): fires after value is committed (blur, Enter, spinner click),
+    // so typing "15" digit-by-digit doesn't truncate labels at the intermediate "1" state.
+    document.getElementById('segmentsInput').addEventListener('change', syncLegendLabelsToCount);
+    document.getElementById('valuesInput').addEventListener('change', syncLegendLabelsToCount);
+
+    document.getElementById('valuesInput').addEventListener('input', updateSegmentsVisibility);
+
+    updateDonutVisibility();
+    updateSegmentsVisibility();
+
+    function populateFromChartData(d) {
       if (d.values && d.values.length > 0) {
         document.getElementById('valuesInput').value = d.values.join(', ');
+      } else {
+        document.getElementById('valuesInput').value = '';
       }
       document.getElementById('segmentsInput').value = String(d.segmentsCount || 5);
       setRadio('styleGroup', d.pieStyle || 'donut');
@@ -423,12 +541,29 @@
       document.getElementById('totalCheck').checked = !!d.showTotal;
       document.getElementById('opacityInput').value = String(d.fillOpacity !== undefined ? Math.round(d.fillOpacity * 100) / 100 : 1);
 
+      var hasLegend = (d.showLegend !== undefined) ? !!d.showLegend : ((d.legendLabels || []).length > 0);
+      document.getElementById('showLegendCheck').checked = hasLegend;
+      document.getElementById('legendInput').value = (d.legendLabels || []).join(', ');
+      setLegendAlign(d.legendAlign || 'left');
+
       updateDonutVisibility();
       updateSegmentsVisibility();
+      updateLegendFieldsVisibility();
+      autoResize(document.getElementById('valuesInput'));
+      autoResizeLegendInput();
 
       replaceMode = true;
       setInsertEnabled(true);
       setRegenEnabled(false);
+    }
+
+    function regenerate() {
+      hideRegenError();
+      if (!storedChartData) {
+        showRegenError('Failed to get data: no chart found in selected frame');
+        return;
+      }
+      populateFromChartData(storedChartData);
     }
 
     function generate() {
@@ -447,6 +582,12 @@
       var showTotal = document.getElementById('totalCheck').checked;
       var fillOpacity = Math.max(0.05, Math.min(1, parseFloat(document.getElementById('opacityInput').value) || 1));
 
+      var showLegend = document.getElementById('showLegendCheck').checked;
+      var legendRaw = document.getElementById('legendInput').value.trim();
+      var legendLabels = legendRaw
+        ? legendRaw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; })
+        : [];
+
       parent.postMessage({ pluginMessage: {
         type: 'generate',
         values: values,
@@ -458,6 +599,9 @@
         showLabels: showLabels,
         showTotal: showTotal,
         fillOpacity: fillOpacity,
+        showLegend: showLegend,
+        legendLabels: legendLabels,
+        legendAlign: getLegendAlign(),
         replace: replaceMode
       }}, '*');
 
@@ -490,8 +634,15 @@
         storedChartData = msg.chartData;
         regenBtn.style.display = 'block';
         copyBtn.style.display = 'block';
-        setRegenEnabled(true);
-        setInsertEnabled(false);
+        if (pendingPasteData) {
+          // Paste just completed — auto-populate the form so the user can edit
+          // immediately, mirroring "Get values from chart" behavior.
+          populateFromChartData(msg.chartData);
+          pendingPasteData = null;
+        } else {
+          setRegenEnabled(true);
+          setInsertEnabled(false);
+        }
       } else {
         storedChartData = null;
         regenBtn.style.display = 'none';
