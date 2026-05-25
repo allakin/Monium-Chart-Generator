@@ -675,13 +675,20 @@ function groupNodes(nodes, container, name) {
 }
 
 // ─── Shared: Measure Y label width ────────────────────────────
+// ─── Shared: format Y axis value (preserves decimals) ─────────
+function formatYValue(v) {
+  if (typeof v !== "number" || isNaN(v)) return String(v);
+  if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+  return parseFloat(v.toFixed(4)).toString();
+}
+
 function measureMaxLabelWidth(labels, suffix) {
   var maxW = 0;
   for (var mi = 0; mi < labels.length; mi++) {
     var measure = figma.createText();
     measure.fontName = { family: "Inter", style: "Regular" };
     measure.fontSize = 11;
-    measure.characters = String(Math.round(labels[mi])) + (suffix || "");
+    measure.characters = formatYValue(labels[mi]) + (suffix || "");
     if (measure.width > maxW) maxW = measure.width;
     measure.remove();
   }
@@ -818,7 +825,7 @@ function drawYLabelsStandard(parent, p, yValues, yMin, yMax, yUnit) {
     var y = p.y + p.h - ratio * p.h - 7;
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
-    t.characters = String(Math.round(yValues[i])) + suffix;
+    t.characters = formatYValue(yValues[i]) + suffix;
     t.fontSize = 11;
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     t.y = y; parent.appendChild(t);
@@ -1602,7 +1609,7 @@ function drawValueLabelsBottom(parent, p, yValues, yMin, yMax, yUnit) {
     var x = p.x + ratio * p.w;
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
-    t.characters = String(Math.round(yValues[i])) + suffix;
+    t.characters = formatYValue(yValues[i]) + suffix;
     t.fontSize = 11;
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     t.y = ly; parent.appendChild(t);
@@ -1922,7 +1929,7 @@ function drawPieValueLabels(parent, cx, cy, outerR, values, labelOffset) {
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
     t.fontSize = 11;
-    t.characters = String(Math.round(values[i]));
+    t.characters = formatYValue(values[i]);
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     parent.appendChild(t);
     if (hDir > 0) t.x = lx3 + 3;
@@ -1941,7 +1948,7 @@ function drawCenterTotal(parent, cx, cy, values) {
   var t = figma.createText();
   t.fontName = { family: "Inter", style: "Regular" };
   t.fontSize = 28;
-  t.characters = String(Math.round(total));
+  t.characters = formatYValue(total);
   t.fills = [{ type: "SOLID", color: { r: 0.1, g: 0.1, b: 0.1 } }];
   parent.appendChild(t);
   t.x = cx - t.width / 2; t.y = cy - t.height / 2;

@@ -132,6 +132,13 @@ var LEGEND_ROW_GAP = 2;
 var LEGEND_MAX_ROWS_PER_PAGE = 3;
 var LEGEND_SIDE_MARGIN = 16;
 
+// ─── Format slice value (preserves decimals) ───────────────
+function formatYValue(v) {
+  if (typeof v !== "number" || isNaN(v)) return String(v);
+  if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+  return parseFloat(v.toFixed(4)).toString();
+}
+
 // ─── Selection tracking ─────────────────────────────────────
 var lastSelectedFrameId = null;
 
@@ -354,7 +361,7 @@ function drawValueLabels(parent, cx, cy, outerR, values, labelOffset) {
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
     t.fontSize = 11;
-    t.characters = String(Math.round(values[i]));
+    t.characters = formatYValue(values[i]);
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     parent.appendChild(t);
 
@@ -548,7 +555,7 @@ function drawCenterTotal(parent, cx, cy, values) {
   var t = figma.createText();
   t.fontName = { family: "Inter", style: "Regular" };
   t.fontSize = 28;
-  t.characters = String(Math.round(total));
+  t.characters = formatYValue(total);
   t.fills = [{ type: "SOLID", color: { r: 0.1, g: 0.1, b: 0.1 } }];
   parent.appendChild(t);
   t.x = cx - t.width / 2;
