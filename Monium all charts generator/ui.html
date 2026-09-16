@@ -700,6 +700,54 @@
     updateAreaStackScaleVisibility();
 
     // ═══════════════════════════════════════════════
+    //  Y axis input parsing
+    // ═══════════════════════════════════════════════
+    // A Y axis entry is arbitrary text: a plain number ("14"), a number with
+    // a unit ("150ms", "12%"), or a clock time ("15:30", "1:02:30"). The
+    // numeric part only positions the label on the axis — the text itself is
+    // drawn as typed, so nothing gets truncated.
+    function parseAxisNumber(str) {
+      var s = String(str === undefined || str === null ? '' : str).trim();
+      var rest = s.slice(s.match(/^[^\d+\-]*/)[0].length);
+
+      var time = rest.match(/^(-?)(\d{1,4}):([0-5]?\d)(?::([0-5]?\d))?/);
+      if (time) {
+        var t = parseFloat(time[2]) + parseFloat(time[3]) / 60 + (time[4] ? parseFloat(time[4]) / 3600 : 0);
+        return time[1] === '-' ? -t : t;
+      }
+      var num = rest.match(/^[-+]?\d+(?:[.,]\d+)?/);
+      return num ? parseFloat(num[0].replace(',', '.')) : NaN;
+    }
+
+    function formatAxisNumber(v) {
+      if (typeof v !== 'number' || isNaN(v)) return String(v);
+      if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
+      return parseFloat(v.toFixed(4)).toString();
+    }
+
+    // Returns { values: [numbers for positioning], labels: [texts to draw] }.
+    function parseYAxisInput(raw) {
+      var tokens = String(raw || '').split(',').map(function (s) { return s.trim(); })
+        .filter(function (s) { return s.length > 0; });
+      var values = [];
+      var allNumeric = true;
+      for (var i = 0; i < tokens.length; i++) {
+        var v = parseAxisNumber(tokens[i]);
+        if (isNaN(v)) allNumeric = false;
+        values.push(v);
+      }
+      // Nothing numeric to anchor on → space the labels evenly.
+      if (!allNumeric) {
+        for (var i = 0; i < values.length; i++) values[i] = i;
+      }
+      var custom = false;
+      for (var i = 0; i < tokens.length; i++) {
+        if (tokens[i] !== formatAxisNumber(values[i])) { custom = true; break; }
+      }
+      return { values: values, labels: custom ? tokens : null };
+    }
+
+    // ═══════════════════════════════════════════════
     //  Legend: visibility + count sync
     // ═══════════════════════════════════════════════
     function updateLegendFieldsVisibility(type) {
@@ -819,8 +867,15 @@
       if (!chartType) return;
       switchTab(chartType);
 
+      // Show the labels as they were typed ("15:30"), not their positions.
+      function yFieldValue(d) {
+        var values = d.yValues || [];
+        var labels = (d.yLabels && d.yLabels.length === values.length) ? d.yLabels : values;
+        return labels.join(', ');
+      }
+
       if (chartType === 'line') {
-        document.getElementById('line-yInput').value = (d.yValues || []).join(', ');
+        document.getElementById('line-yInput').value = yFieldValue(d);
         document.getElementById('line-yUnitInput').value = d.yUnit || '';
         document.getElementById('line-xInput').value = (d.xLabels || []).join(', ');
         document.getElementById('line-countInput').value = String(d.linesCount || 2);
@@ -836,7 +891,7 @@
         autoResize(document.getElementById('line-xInput'));
         autoResize(document.getElementById('line-legendInput'));
       } else if (chartType === 'area') {
-        document.getElementById('area-yInput').value = (d.yValues || []).join(', ');
+        document.getElementById('area-yInput').value = yFieldValue(d);
         document.getElementById('area-yUnitInput').value = d.yUnit || '';
         document.getElementById('area-xInput').value = (d.xLabels || []).join(', ');
         document.getElementById('area-countInput').value = String(d.areasCount || 3);
@@ -856,7 +911,7 @@
         autoResize(document.getElementById('area-xInput'));
         autoResize(document.getElementById('area-legendInput'));
       } else if (chartType === 'bar') {
-        document.getElementById('bar-yInput').value = (d.yValues || []).join(', ');
+        document.getElementById('bar-yInput').value = yFieldValue(d);
         document.getElementById('bar-yUnitInput').value = d.yUnit || '';
         document.getElementById('bar-xInput').value = (d.xLabels || []).join(', ');
         document.getElementById('bar-countInput').value = String(d.barsCount || 3);
@@ -945,9 +1000,11 @@
       if (currentTab === 'line') {
         var yRaw = document.getElementById('line-yInput').value.trim();
         var xRaw = document.getElementById('line-xInput').value.trim();
-        msgData.yValues = yRaw.split(',').map(function(s) { return parseFloat(s.trim()); }).filter(function(n) { return !isNaN(n); });
+        var yParsed = parseYAxisInput(yRaw);
+        msgData.yValues = yParsed.values;
+        msgData.yLabels = yParsed.labels;
         msgData.xLabels = xRaw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
-        msgData.linesCount = Math.max(1, Math.min(20, parseInt(document.getElementById('line-countInput').value) || 2));
+        msgData.linesCount =Math.max(1, Math.min(20, parseInt(document.getElementById('line-countInput').value) || 2));
         msgData.lineStyle = getRadio('lineStyle');
         msgData.yUnit = document.getElementById('line-yUnitInput').value.trim();
         msgData.topEvent = document.getElementById('line-topEvent').checked;
@@ -958,9 +1015,11 @@
       } else if (currentTab === 'area') {
         var yRaw = document.getElementById('area-yInput').value.trim();
         var xRaw = document.getElementById('area-xInput').value.trim();
-        msgData.yValues = yRaw.split(',').map(function(s) { return parseFloat(s.trim()); }).filter(function(n) { return !isNaN(n); });
+        var yParsed = parseYAxisInput(yRaw);
+        msgData.yValues = yParsed.values;
+        msgData.yLabels = yParsed.labels;
         msgData.xLabels = xRaw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
-        msgData.areasCount = Math.max(1, Math.min(20, parseInt(document.getElementById('area-countInput').value) || 3));
+        msgData.areasCount =Math.max(1, Math.min(20, parseInt(document.getElementById('area-countInput').value) || 3));
         msgData.areaStyle = getRadio('areaStyle');
         msgData.areaMode = getRadio('areaMode');
         msgData.fillHeight = document.getElementById('area-fillHeightCheck').checked;
@@ -974,9 +1033,11 @@
       } else if (currentTab === 'bar') {
         var yRaw = document.getElementById('bar-yInput').value.trim();
         var xRaw = document.getElementById('bar-xInput').value.trim();
-        msgData.yValues = yRaw.split(',').map(function(s) { return parseFloat(s.trim()); }).filter(function(n) { return !isNaN(n); });
+        var yParsed = parseYAxisInput(yRaw);
+        msgData.yValues = yParsed.values;
+        msgData.yLabels = yParsed.labels;
         msgData.xLabels = xRaw.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
-        msgData.barsCount = Math.max(1, Math.min(20, parseInt(document.getElementById('bar-countInput').value) || 3));
+        msgData.barsCount =Math.max(1, Math.min(20, parseInt(document.getElementById('bar-countInput').value) || 3));
         msgData.orientation = getRadio('barOrientation');
         msgData.barMode = getRadio('barMode');
         msgData.dense = document.getElementById('bar-denseCheck').checked;

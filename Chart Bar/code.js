@@ -135,6 +135,69 @@ function formatYValue(v) {
   if (Math.abs(v - Math.round(v)) < 1e-9) return String(Math.round(v));
   return parseFloat(v.toFixed(4)).toString();
 }
+// ─── Y axis label parsing ───────────────────────────────────
+// A Y axis entry is arbitrary text: a plain number ("14"), a number with a
+// unit ("150ms", "12%"), or a clock time ("15:30", "1:02:30"). The numeric
+// part only positions the label on the axis — the text itself is drawn as
+// typed, so nothing gets truncated.
+function parseAxisLabel(str) {
+  var s = String(str === undefined || str === null ? "" : str).trim();
+  var prefix = s.match(/^[^\d+\-]*/)[0];
+  var rest = s.slice(prefix.length);
+
+  var time = rest.match(/^(-?)(\d{1,4}):([0-5]?\d)(?::([0-5]?\d))?/);
+  if (time) {
+    var t = parseFloat(time[2]) + parseFloat(time[3]) / 60 + (time[4] ? parseFloat(time[4]) / 3600 : 0);
+    return { value: time[1] === "-" ? -t : t, unit: rest.slice(time[0].length) };
+  }
+  var num = rest.match(/^[-+]?\d+(?:[.,]\d+)?/);
+  if (!num) return { value: NaN, unit: "" };
+  return { value: parseFloat(num[0].replace(",", ".")), unit: rest.slice(num[0].length) };
+}
+
+// Turns raw Y label texts (bottom → top order) into positions, a shared unit
+// and, when the texts aren't plain numbers, the labels to draw verbatim.
+function parseYLabelTexts(chars) {
+  var i;
+  var yUnit = chars.length > 0 ? (parseAxisLabel(chars[0]).unit || "") : "";
+  // A trailing unit only counts when every label carries it.
+  if (yUnit) {
+    for (i = 0; i < chars.length; i++) {
+      if (chars[i].slice(-yUnit.length) !== yUnit) { yUnit = ""; break; }
+    }
+  }
+
+  // Purely textual labels (a horizontal bar chart's category axis) carry no
+  // position, so they are skipped — the caller treats that as "not an axis".
+  var labels = [];
+  var values = [];
+  for (i = 0; i < chars.length; i++) {
+    var text = yUnit ? chars[i].slice(0, chars[i].length - yUnit.length) : chars[i];
+    var value = parseAxisLabel(text).value;
+    if (isNaN(value)) continue;
+    labels.push(text);
+    values.push(value);
+  }
+
+  var custom = false;
+  for (i = 0; i < labels.length; i++) {
+    if (labels[i] !== formatYValue(values[i])) { custom = true; break; }
+  }
+  return { yValues: values, yUnit: yUnit, yLabels: custom ? labels : null };
+}
+
+// Text drawn for each Y tick: the label as typed when it isn't a plain
+// number (time, currency), otherwise the formatted value.
+function resolveYLabels(yLabels, yValues) {
+  var usable = yLabels && yLabels.length === yValues.length;
+  var out = [];
+  for (var i = 0; i < yValues.length; i++) {
+    var raw = usable && yLabels[i] !== undefined && yLabels[i] !== null ? String(yLabels[i]) : "";
+    out.push(raw.length > 0 ? raw : formatYValue(yValues[i]));
+  }
+  return out;
+}
+
 
 // ─── Selection tracking ─────────────────────────────────────
 var lastSelectedFrameId = null;
@@ -194,6 +257,7 @@ function readChartParamsFromLayers(chartFrame) {
 
   var yValues = [];
   var yUnit = "";
+  var yLabels = null;
   var xLabels = [];
   var barsCount = 1;
   var orientation = "vertical";
@@ -208,18 +272,16 @@ function readChartParamsFromLayers(chartFrame) {
   if (groups["Y Labels"] && "children" in groups["Y Labels"]) {
     var yTexts = [];
     for (var i = 0; i < groups["Y Labels"].children.length; i++) {
-      if (groups["Y Labels"].children[i].type === "TEXT") yTexts.push(groups["Y Labels"].children[i]);
+      var yc = groups["Y Labels"].children[i];
+      if (yc.type === "TEXT" && yc.characters.length > 0) yTexts.push(yc);
     }
     yTexts.sort(function (a, b) { return b.y - a.y; });
-    if (yTexts.length > 0) {
-      var match = yTexts[0].characters.match(/^(-?\d+(?:\.\d+)?)(.*)/);
-      if (match) yUnit = match[2] || "";
-    }
-    for (var i = 0; i < yTexts.length; i++) {
-      var numStr = yUnit ? yTexts[i].characters.replace(yUnit, "") : yTexts[i].characters;
-      var num = parseFloat(numStr);
-      if (!isNaN(num)) yValues.push(num);
-    }
+    var yChars = [];
+    for (var i = 0; i < yTexts.length; i++) yChars.push(yTexts[i].characters);
+    var parsedY = parseYLabelTexts(yChars);
+    yValues = parsedY.yValues;
+    yUnit = parsedY.yUnit;
+    yLabels = parsedY.yLabels;
   }
 
   if (groups["X Labels"] && "children" in groups["X Labels"]) {
@@ -314,17 +376,14 @@ function readChartParamsFromLayers(chartFrame) {
     yLabelTexts.sort(function (a, b) { return b.y - a.y; });
     xLabels = [];
     for (var i = 0; i < xLabelTexts.length; i++) xLabels.push(xLabelTexts[i].characters);
-    yUnit = "";
-    yValues = [];
-    if (yLabelTexts.length > 0) {
-      var match = yLabelTexts[0].characters.match(/^(-?\d+(?:\.\d+)?)(.*)/);
-      if (match) yUnit = match[2] || "";
-      for (var i = 0; i < yLabelTexts.length; i++) {
-        var numStr = yUnit ? yLabelTexts[i].characters.replace(yUnit, "") : yLabelTexts[i].characters;
-        var num = parseFloat(numStr);
-        if (!isNaN(num)) yValues.push(num);
-      }
+    var flatChars = [];
+    for (var i = 0; i < yLabelTexts.length; i++) {
+      if (yLabelTexts[i].characters.length > 0) flatChars.push(yLabelTexts[i].characters);
     }
+    var parsedFlatY = parseYLabelTexts(flatChars);
+    yValues = parsedFlatY.yValues;
+    yUnit = parsedFlatY.yUnit;
+    yLabels = parsedFlatY.yLabels;
     // Event detection from small rects
     for (var i = 0; i < rects.length; i++) {
       if (Math.abs(rects[i].height - 6) < 1) {
@@ -335,10 +394,20 @@ function readChartParamsFromLayers(chartFrame) {
   }
 
   if (yValues.length < 2) return null;
-  yValues.sort(function (a, b) { return a - b; });
+
+  // Sort bottom → top, keeping each label attached to its own value.
+  var pairs = [];
+  for (var pi = 0; pi < yValues.length; pi++) {
+    pairs.push({ v: yValues[pi], l: yLabels ? yLabels[pi] : null });
+  }
+  pairs.sort(function (a, b) { return a.v - b.v; });
+  for (var pi = 0; pi < pairs.length; pi++) {
+    yValues[pi] = pairs[pi].v;
+    if (yLabels) yLabels[pi] = pairs[pi].l;
+  }
 
   return {
-    yValues: yValues, yUnit: yUnit, xLabels: xLabels,
+    yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
     barsCount: barsCount, orientation: orientation, barMode: barMode,
     dense: dense, barGap: barGap, fillOpacity: fillOpacity,
     topEvent: topEvent, bottomEvent: bottomEvent
@@ -403,6 +472,7 @@ async function renderChart(params, exactData) {
   if (!xLabels || xLabels.length < 1) xLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
   if (!barsCount || barsCount < 1) barsCount = 2;
   if (barsCount > 20) barsCount = 20;
+  var yLabels = resolveYLabels(params.yLabels, yValues);
 
   // Legend params
   var showLegend = (params.showLegend !== undefined)
@@ -499,7 +569,7 @@ async function renderChart(params, exactData) {
       var measure = figma.createText();
       measure.fontName = { family: "Inter", style: "Regular" };
       measure.fontSize = 11;
-      measure.characters = formatYValue(yValues[mi]) + suffix;
+      measure.characters = yLabels[mi] + suffix;
       if (measure.width > maxLabelWidth) maxLabelWidth = measure.width;
       measure.remove();
     }
@@ -546,12 +616,12 @@ async function renderChart(params, exactData) {
   var gridNodes, yLabelNodes, xLabelNodes;
   if (orientation === "vertical") {
     gridNodes = drawGridVertical(container, plot, yValues, xLabels, dataPointCount);
-    yLabelNodes = drawValueLabelsLeft(container, plot, yValues, yMin, yMax, yUnit);
+    yLabelNodes = drawValueLabelsLeft(container, plot, yValues, yMin, yMax, yUnit, yLabels);
     xLabelNodes = drawCategoryLabelsBottom(container, plot, xLabels);
   } else {
     gridNodes = drawGridHorizontal(container, plot, yValues, yMin, yMax, xLabels, dataPointCount);
     yLabelNodes = drawCategoryLabelsLeft(container, plot, xLabels);
-    xLabelNodes = drawValueLabelsBottom(container, plot, yValues, yMin, yMax, yUnit);
+    xLabelNodes = drawValueLabelsBottom(container, plot, yValues, yMin, yMax, yUnit, yLabels);
   }
 
   var distinctColors;
@@ -598,7 +668,7 @@ async function renderChart(params, exactData) {
   }
 
   var chartParams = {
-    yValues: yValues, yUnit: yUnit, xLabels: xLabels,
+    yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
     barsCount: barsCount, orientation: orientation, barMode: barMode,
     dense: dense, barGap: barGap, fillOpacity: fillOpacity,
     topEvent: topEvent, bottomEvent: bottomEvent,
@@ -700,16 +770,17 @@ function drawGridHorizontal(parent, p, yValues, yMin, yMax, xLabels, dataPointCo
 }
 
 // ─── Value labels on left axis (vertical orientation) ───────
-function drawValueLabelsLeft(parent, p, yValues, yMin, yMax, yUnit) {
+function drawValueLabelsLeft(parent, p, yValues, yMin, yMax, yUnit, yLabels) {
   var nodes = [];
   var rightEdge = p.x - 8;
   var suffix = yUnit || "";
+  var labels = resolveYLabels(yLabels, yValues);
   for (var i = 0; i < yValues.length; i++) {
     var ratio = (yValues[i] - yMin) / (yMax - yMin);
     var y = p.y + p.h - ratio * p.h - 7;
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
-    t.characters = formatYValue(yValues[i]) + suffix;
+    t.characters = labels[i] + suffix;
     t.fontSize = 11;
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     t.y = y; parent.appendChild(t);
@@ -759,16 +830,17 @@ function drawCategoryLabelsLeft(parent, p, xLabels) {
 }
 
 // ─── Value labels on bottom axis (horizontal orientation) ───
-function drawValueLabelsBottom(parent, p, yValues, yMin, yMax, yUnit) {
+function drawValueLabelsBottom(parent, p, yValues, yMin, yMax, yUnit, yLabels) {
   var nodes = [];
   var ly = p.y + p.h + 6;
   var suffix = yUnit || "";
+  var labels = resolveYLabels(yLabels, yValues);
   for (var i = 0; i < yValues.length; i++) {
     var ratio = (yValues[i] - yMin) / (yMax - yMin);
     var x = p.x + ratio * p.w;
     var t = figma.createText();
     t.fontName = { family: "Inter", style: "Regular" };
-    t.characters = formatYValue(yValues[i]) + suffix;
+    t.characters = labels[i] + suffix;
     t.fontSize = 11;
     t.fills = [{ type: "SOLID", color: COLOR_AXIS, opacity: AXIS_OPACITY }];
     t.y = ly; parent.appendChild(t);
