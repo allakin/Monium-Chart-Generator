@@ -23,7 +23,7 @@ Monium all charts generator/
 
 ### code.js Structure (top to bottom)
 ```
-1. SHARED: PALETTE (75 colors)
+1. SHARED: PALETTE (68 colors)
 2. SHARED: selectDistinctColors(count)
 3. SHARED: Constants (COLOR_GRID, COLOR_AXIS, PAD_*, DEFAULT_*)
 4. SHARED: CHART_NAMES array — list of all chart container names
