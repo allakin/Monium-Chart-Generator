@@ -38,10 +38,9 @@ Monium Chart Generator/
 
 ## Shared Style Parameters
 
-### Color Palette (75 colors for data series)
+### Color Palette (68 colors for data series)
 Use ALL colors from this list in the PALETTE array in every chart plugin. Select colors using the **greedy maximin** algorithm (not random shuffle) to maximize visual contrast between series.
 ```
-#222F3E  → { r: 0.133, g: 0.184, b: 0.243 }
 #0ABDE3  → { r: 0.043, g: 0.741, b: 0.890 }
 #FBC531  → { r: 0.984, g: 0.773, b: 0.192 }
 #6C5CE7  → { r: 0.424, g: 0.361, b: 0.906 }
@@ -53,7 +52,6 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 #9B59B6  → { r: 0.608, g: 0.349, b: 0.714 }
 #2ED573  → { r: 0.180, g: 0.835, b: 0.451 }
 #FD7272  → { r: 0.992, g: 0.447, b: 0.447 }
-#34495E  → { r: 0.204, g: 0.286, b: 0.369 }
 #48DBFB  → { r: 0.282, g: 0.859, b: 0.984 }
 #FFC048  → { r: 1.000, g: 0.753, b: 0.282 }
 #5F27CD  → { r: 0.373, g: 0.153, b: 0.804 }
@@ -65,7 +63,6 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 #82589F  → { r: 0.510, g: 0.345, b: 0.624 }
 #00D2D3  → { r: 0.000, g: 0.824, b: 0.827 }
 #EA8685  → { r: 0.918, g: 0.525, b: 0.522 }
-#3D3D3D  → { r: 0.239, g: 0.239, b: 0.239 }
 #1B9CFC  → { r: 0.106, g: 0.612, b: 0.988 }
 #FF9F43  → { r: 1.000, g: 0.624, b: 0.263 }
 #6C3483  → { r: 0.424, g: 0.204, b: 0.514 }
@@ -77,7 +74,6 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 #8854D0  → { r: 0.533, g: 0.329, b: 0.816 }
 #2BCBBA  → { r: 0.169, g: 0.796, b: 0.729 }
 #FF647C  → { r: 1.000, g: 0.392, b: 0.486 }
-#2C3E50  → { r: 0.173, g: 0.243, b: 0.314 }
 #2E86DE  → { r: 0.180, g: 0.525, b: 0.871 }
 #E17055  → { r: 0.882, g: 0.439, b: 0.333 }
 #A55EEA  → { r: 0.647, g: 0.369, b: 0.918 }
@@ -101,8 +97,6 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 #0FBCF9  → { r: 0.059, g: 0.737, b: 0.976 }
 #00A8FF  → { r: 0.000, g: 0.659, b: 1.000 }
 #0097E6  → { r: 0.000, g: 0.592, b: 0.902 }
-#273C75  → { r: 0.153, g: 0.235, b: 0.459 }
-#192A56  → { r: 0.098, g: 0.165, b: 0.337 }
 #4CD137  → { r: 0.298, g: 0.820, b: 0.216 }
 #44BD32  → { r: 0.267, g: 0.741, b: 0.196 }
 #487EB0  → { r: 0.278, g: 0.494, b: 0.690 }
@@ -112,7 +106,6 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 #8C7AE6  → { r: 0.549, g: 0.478, b: 0.902 }
 #9C88FF  → { r: 0.612, g: 0.533, b: 1.000 }
 #718093  → { r: 0.443, g: 0.502, b: 0.576 }
-#353B48  → { r: 0.208, g: 0.231, b: 0.282 }
 #7B1FA2  → { r: 0.482, g: 0.122, b: 0.635 }
 #00897B  → { r: 0.000, g: 0.537, b: 0.482 }
 #D81B60  → { r: 0.847, g: 0.106, b: 0.376 }
