@@ -40,6 +40,8 @@ Monium Chart Generator/
 
 ### Color Palette (68 colors for data series)
 Use ALL colors from this list in the PALETTE array in every chart plugin. Select colors using the **greedy maximin** algorithm (not random shuffle) to maximize visual contrast between series.
+
+The palette is a *pool*, not a ranked list: it deliberately contains near-twins (`#FF6B6B` and `#FD7272` are only ΔE 1.3 apart), so distinctness is the picker's job, not the pool's. Never index into `PALETTE` directly for series colors — always go through `selectDistinctColors(count)`, which compares colors perceptually and under simulated colour blindness. See [Distinct Color Selection Algorithm](#distinct-color-selection-algorithm--selectdistinctcolorscount).
 ```
 #0ABDE3  → { r: 0.043, g: 0.741, b: 0.890 }
 #FBC531  → { r: 0.984, g: 0.773, b: 0.192 }
@@ -194,14 +196,16 @@ Use ALL colors from this list in the PALETTE array in every chart plugin. Select
 - **Segment gap**: `0–10` degrees, default `1` — angular gap between adjacent slices (split equally on both sides of each slice boundary)
 - **Values input**: comma-separated numbers for exact slice sizes. If empty, random values are generated based on **Segments count** (1–20, default 5). Random range: `5–200` per segment
 - Default chart size (no frame selected): `500 × 500` (square, unlike other charts which use `600 × 400`)
-- Pie geometry: `outerR = (min(w, h) - margin * 2) / 2`, centered at `(w/2, h/2)`. Label margin: `60px` when labels shown, `10px` otherwise
+- Pie geometry: `outerR = (min(w, pieAreaH) - margin * 2) / 2`, centered at `(w/2, pieAreaH/2)`, where `pieAreaH = h - legend area`. Label margin: `60px` when labels shown, `10px` otherwise — but never more than `30%` (labels) / `10%` (no labels) of `min(w, pieAreaH)` per side, and the resulting diameter is floored at `8px`, so small frames (e.g. `233 × 95`) still render instead of failing on a negative diameter
 - **Value labels** (optional): leader lines from each slice's midpoint angle outward, with horizontal elbow and text showing the rounded numeric value
   - Leader line: vector path (`M`/`L` commands), stroke `#000000` at opacity `0.3`, weight `0.5px`
+  - Label offset: half the label margin (`30px` at default sizes), min `6px`
   - Radial segment: `40%` of label offset outward from pie edge
   - Horizontal segment: `50%` of label offset, direction based on which half (left/right) the midpoint angle falls in
   - Text: font `Inter Regular`, size `11px`, color `rgba(0,0,0,0.5)`, positioned `3px` from horizontal line end
 - **Center total** (optional, Donut only): sum of all values displayed at the pie center
   - Font: `Inter Regular`, size `28px`, color `{ r: 0.1, g: 0.1, b: 0.1 }`
+  - Size shrinks to fit small donut holes: `clamp(8, round(innerR * 0.6), 28)`, then stepped down further (min `6px`) until the text is no wider than `innerR * 1.7`
   - Horizontally and vertically centered in the donut hole
 - No grid, axes, or event bars (not applicable to pie charts)
 
@@ -306,7 +310,7 @@ active: background: #4D7CFE; color: #fff;
 - `16px` between all sections (fields, groups, buttons)
 
 ### Footer
-- `"Monium Design System v2.1"` — plain text, no link
+- `"Monium Design System v2.3"` — plain text, no link
 - `font-size: 10px; color: #AAAAAA; text-align: center`
 
 ### Header Subtitle — brand + Documentation link
@@ -1219,50 +1223,92 @@ for (var pi = 0; pi < pointCount; pi++) {
 }
 
 // Select maximally distinct colors for the series count
-// Greedy maximin: random first, then each next maximizes min RGB distance to all selected
+// Greedy maximin: random first, then each next maximizes min perceptual
+// (OKLab, colour-blindness-aware) distance to all selected
 var distinctColors = selectDistinctColors(seriesCount);
 ```
 
 ### Distinct Color Selection Algorithm — `selectDistinctColors(count)`
-Ensures maximum visual contrast between series colors. Must be used instead of random shuffle.
+Ensures maximum visual contrast between series colors. Must be used instead of random shuffle, and instead of indexing `PALETTE` directly.
+
+Three things happen, in order:
+
+1. **Greedy maximin pick.** A random first color (this is what makes every generation look different), then each next color maximizes the minimum distance to everything already picked.
+2. **Perceptual distance.** Distance is OKLab ΔE × 100, *not* Euclidean RGB. Equal RGB steps are not equal perceptual steps, so an RGB-nearest search rates `#FF6B6B`/`#FD7272` as far apart and hands both to adjacent series. Each palette color is additionally pre-simulated under protanopia and deuteranopia (Machado, Oliveira & Fernandes 2009, severity 1.0); `paletteDistance` returns the **smallest** gap across the three vision models, so a pair that collapses for a colour-blind reader counts as close.
+3. **Adjacency ordering.** `orderForAdjacency` reorders the picked set so consecutive series — touching pie slices, stacked bar segments, adjacent legend rows — are the most contrasting pairs: a greedy chain, then swap passes that maximize the smallest neighbouring gap.
+
+`PALETTE_LAB` is built once at load (68 colors × 3 vision models), so the picker only ever subtracts.
+
+**Thresholds the plugins are held to** (enforced in `tests/helpers-unit.test.js`, reference maths in `tests/helpers/color.js`):
+
+| Gate | Floor | Measured, worst case, 1–20 series |
+| --- | --- | --- |
+| Neighbouring series, normal vision | ΔE ≥ 15 | 17.3 |
+| Neighbouring series, protanopia / deuteranopia | ΔE ≥ 8 | 17.0 |
+
+Neighbours, not all pairs, are the gate: no palette of eight colors can be pairwise-distinct at ΔE 15 — the sRGB gamut does not contain eight such colors once contrast and chroma floors are applied. Beyond ~10 series the honest answer is fewer series, not more colors.
+
 ```js
+// Compared in OKLab under three vision models; built once at load.
+var VISION_MODELS = [
+  [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  [0.152286, 1.052583, -0.204868, 0.114503, 0.786281, 0.099216, -0.003882, -0.048116, 1.051998],
+  [0.367322, 0.860646, -0.227968, 0.280085, 0.672501, 0.047413, -0.011820, 0.042940, 0.968881]
+];
+
+function paletteDistance(a, b) {
+  var la = PALETTE_LAB[a];
+  var lb = PALETTE_LAB[b];
+  var worst = Infinity;
+  for (var v = 0; v < la.length; v++) {
+    var dl = la[v][0] - lb[v][0];
+    var da = la[v][1] - lb[v][1];
+    var db = la[v][2] - lb[v][2];
+    var d = Math.sqrt(dl * dl + da * da + db * db) * 100;
+    if (d < worst) worst = d;
+  }
+  return worst;
+}
+
 function selectDistinctColors(count) {
-  if (count >= PALETTE.length) {
-    // Fallback: shuffle entire palette
-    var all = PALETTE.slice();
-    for (var si = all.length - 1; si > 0; si--) {
-      var ri = Math.floor(Math.random() * (si + 1));
-      var tmp = all[si]; all[si] = all[ri]; all[ri] = tmp;
-    }
-    return all;
-  }
   var used = [];
-  var available = [];
-  for (var i = 0; i < PALETTE.length; i++) available.push(i);
-  // Random first color (ensures variety between generations)
-  var firstIdx = Math.floor(Math.random() * available.length);
-  used.push(available[firstIdx]);
-  available.splice(firstIdx, 1);
-  // Each next: pick color with max min-distance to all already selected
-  for (var pick = 1; pick < count; pick++) {
-    var bestIdx = 0;
-    var bestDist = -1;
-    for (var j = 0; j < available.length; j++) {
-      var c = PALETTE[available[j]];
-      var minDist = Infinity;
-      for (var k = 0; k < used.length; k++) {
-        var u = PALETTE[used[k]];
-        var dr = c.r - u.r; var dg = c.g - u.g; var db = c.b - u.b;
-        var d = dr * dr + dg * dg + db * db;
-        if (d < minDist) minDist = d;
-      }
-      if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+  var i;
+  if (count >= PALETTE.length) {
+    // Fallback: shuffle the entire palette
+    for (i = 0; i < PALETTE.length; i++) used.push(i);
+    for (var si = used.length - 1; si > 0; si--) {
+      var ri = Math.floor(Math.random() * (si + 1));
+      var tmp = used[si]; used[si] = used[ri]; used[ri] = tmp;
     }
-    used.push(available[bestIdx]);
-    available.splice(bestIdx, 1);
+  } else {
+    var available = [];
+    for (i = 0; i < PALETTE.length; i++) available.push(i);
+    // Random first color (ensures variety between generations)
+    var firstIdx = Math.floor(Math.random() * available.length);
+    used.push(available[firstIdx]);
+    available.splice(firstIdx, 1);
+    // Each next: pick color with max min-distance to all already selected
+    for (var pick = 1; pick < count; pick++) {
+      var bestIdx = 0;
+      var bestDist = -1;
+      for (var j = 0; j < available.length; j++) {
+        var minDist = Infinity;
+        for (var k = 0; k < used.length; k++) {
+          var d = paletteDistance(available[j], used[k]);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+      }
+      used.push(available[bestIdx]);
+      available.splice(bestIdx, 1);
+    }
   }
+  // Neighbouring series get the most contrasting pairs
+  used = orderForAdjacency(used);
   var result = [];
-  for (var i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
+  for (i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
   return result;
 }
 ```
+
+The full implementation — `cubeRoot`, `srgbChannelToLinear`, `linearRgbToOklab`, `PALETTE_LAB`, `orderForAdjacency` — sits directly above `selectDistinctColors` in every `code.js` and must stay byte-identical across all five plugins (`tests/helpers-unit.test.js` compares the copies).

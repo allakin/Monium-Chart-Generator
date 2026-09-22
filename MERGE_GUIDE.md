@@ -24,7 +24,9 @@ Monium all charts generator/
 ### code.js Structure (top to bottom)
 ```
 1. SHARED: PALETTE (68 colors)
-2. SHARED: selectDistinctColors(count)
+2. SHARED: perceptual color distance (cubeRoot, srgbChannelToLinear,
+   linearRgbToOklab, VISION_MODELS, PALETTE_LAB, paletteDistance)
+   + orderForAdjacency(indices) + selectDistinctColors(count)
 3. SHARED: Constants (COLOR_GRID, COLOR_AXIS, PAD_*, DEFAULT_*)
 4. SHARED: CHART_NAMES array — list of all chart container names
 5. SHARED: Selection tracking (lastSelectedFrameId, getSelectedFrame, getTargetFrame)
@@ -86,12 +88,12 @@ Before merging, open `CHART_STYLE_GUIDE.md` and verify:
 
 #### Step 1: Identify what changed
 Categorize changes into:
-- **A) Shared code** — PALETTE, selectDistinctColors, selection tracking, event bars, grid/labels, curve builders
+- **A) Shared code** — PALETTE, perceptual distance + selectDistinctColors, selection tracking, event bars, grid/labels, curve builders
 - **B) Chart-specific code.js** — drawing functions, generate function, readParamsFromLayers
 - **C) Chart-specific ui.html** — fields, radio groups, visibility logic, regenerate/generate functions
 
 #### Step 2: Merge shared code changes (Category A)
-If PALETTE, selectDistinctColors, event colors, grid drawing, label drawing, or curve path builders changed:
+If PALETTE, the perceptual-distance block, selectDistinctColors, orderForAdjacency, event colors, grid drawing, label drawing, or curve path builders changed:
 1. Copy the updated function from the individual plugin
 2. Replace the corresponding function in `Monium all charts generator/code.js` in the SHARED section
 3. Verify no other chart type depends on the old behavior

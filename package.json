@@ -1,0 +1,18 @@
+{
+  "name": "monium-chart-generator-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Test harness for the Monium Chart Generator Figma plugins (no runtime dependencies)",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:watch": "node --test --watch tests/*.test.js",
+    "test:pie": "node --test tests/pie.test.js",
+    "test:line": "node --test tests/line.test.js",
+    "test:area": "node --test tests/area.test.js",
+    "test:bar": "node --test tests/bar.test.js",
+    "test:sizes": "node --test tests/small-frames.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
