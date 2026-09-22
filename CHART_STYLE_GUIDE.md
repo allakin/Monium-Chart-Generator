@@ -1,7 +1,7 @@
 # Monium Chart Generator — Design System for Figma Chart Plugins
 
 ## Overview
-This folder contains Figma plugins for generating charts in Monium / Yandex Cloud style. Each chart type lives in its own subfolder (e.g. `Chart Line/`). All plugins share the same visual style defined below.
+This folder contains Figma plugins for generating charts in Monium style. Each chart type lives in its own subfolder (e.g. `Chart Line/`). All plugins share the same visual style defined below.
 
 **This file is a skill for creating new Figma chart plugins.** When asked to create a new chart type plugin, follow this guide: apply all shared style parameters, reuse UI patterns, and place the plugin in its own subfolder with `manifest.json`, `code.js`, and `ui.html`.
 
