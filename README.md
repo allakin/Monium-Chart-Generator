@@ -8,7 +8,7 @@
 [![Area tests](https://img.shields.io/github/actions/workflow/status/allakin/Monium-Chart-Generator/tests-area.yml?branch=main&label=Area%20tests&logo=github)](https://github.com/allakin/Monium-Chart-Generator/actions/workflows/tests-area.yml)
 [![Pie tests](https://img.shields.io/github/actions/workflow/status/allakin/Monium-Chart-Generator/tests-pie.yml?branch=main&label=Pie%20tests&logo=github)](https://github.com/allakin/Monium-Chart-Generator/actions/workflows/tests-pie.yml)
 
-Набор плагинов для Figma, которые генерируют графики в стиле Monium / Yandex Cloud. Плагин рисует чарт нативными узлами Figma (векторы, прямоугольники, эллипсы с `arcData`, текст) — результат можно править руками как обычный слой, без картинок и внешних зависимостей.
+Набор плагинов для Figma, которые генерируют графики в стиле Monium. Плагин рисует чарт нативными узлами Figma (векторы, прямоугольники, эллипсы с `arcData`, текст) — результат можно править руками как обычный слой, без картинок и внешних зависимостей.
 
 📖 **Документация и гайды — в [вики репозитория](https://github.com/allakin/Monium-Chart-Generator/wiki).**
 
