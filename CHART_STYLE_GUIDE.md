@@ -310,7 +310,7 @@ active: background: #4D7CFE; color: #fff;
 - `16px` between all sections (fields, groups, buttons)
 
 ### Footer
-- `"Monium Design System v2.3"` — plain text, no link
+- `"Monium Design System v2.4"` — plain text, no link
 - `font-size: 10px; color: #AAAAAA; text-align: center`
 
 ### Header Subtitle — brand + Documentation link
