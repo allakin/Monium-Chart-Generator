@@ -77,41 +77,167 @@ var PALETTE = [
   { r: 0.847, g: 0.106, b: 0.376 }, // #D81B60
 ];
 
-// ─── Shared: Distinct color selection (greedy maximin) ─────────
-function selectDistinctColors(count) {
-  if (count >= PALETTE.length) {
-    var all = PALETTE.slice();
-    for (var si = all.length - 1; si > 0; si--) {
-      var ri = Math.floor(Math.random() * (si + 1));
-      var tmp = all[si]; all[si] = all[ri]; all[ri] = tmp;
-    }
-    return all;
+// ─── Perceptual color distance ──────────────────────────────
+// Series colors are compared in OKLab, not in raw RGB. Equal RGB steps are not
+// equal perceptual steps, so an RGB-nearest search happily hands two visually
+// identical colors to neighbouring series: #FF6B6B and #FD7272 sit far apart in
+// RGB but only 1.3 apart perceptually. Distances below are OKLab ΔE × 100.
+function cubeRoot(x) {
+  return (x < 0) ? -Math.pow(-x, 1 / 3) : Math.pow(x, 1 / 3);
+}
+
+function srgbChannelToLinear(c) {
+  return (c <= 0.04045) ? (c / 12.92) : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function linearRgbToOklab(r, g, b) {
+  var l = cubeRoot(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  var m = cubeRoot(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  var s = cubeRoot(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+  ];
+}
+
+// Colour-vision-deficiency simulation in linear RGB (Machado, Oliveira &
+// Fernandes 2009, severity 1.0). Protanopia and deuteranopia cover the large
+// majority of colour blindness; simulating them here is what stops the picker
+// from choosing a pair that is vivid for most readers and identical for some.
+var VISION_MODELS = [
+  [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  [0.152286, 1.052583, -0.204868, 0.114503, 0.786281, 0.099216, -0.003882, -0.048116, 1.051998],
+  [0.367322, 0.860646, -0.227968, 0.280085, 0.672501, 0.047413, -0.011820, 0.042940, 0.968881]
+];
+
+// PALETTE_LAB[i][v] — OKLab coordinates of palette color i under vision model v.
+// Built once at load: 68 colors × 3 models, so the picker only ever subtracts.
+var PALETTE_LAB = [];
+for (var pl = 0; pl < PALETTE.length; pl++) {
+  var plr = srgbChannelToLinear(PALETTE[pl].r);
+  var plg = srgbChannelToLinear(PALETTE[pl].g);
+  var plb = srgbChannelToLinear(PALETTE[pl].b);
+  var plVariants = [];
+  for (var pv = 0; pv < VISION_MODELS.length; pv++) {
+    var pm = VISION_MODELS[pv];
+    plVariants.push(linearRgbToOklab(
+      pm[0] * plr + pm[1] * plg + pm[2] * plb,
+      pm[3] * plr + pm[4] * plg + pm[5] * plb,
+      pm[6] * plr + pm[7] * plg + pm[8] * plb
+    ));
   }
-  var used = [];
-  var available = [];
-  for (var i = 0; i < PALETTE.length; i++) available.push(i);
-  var firstIdx = Math.floor(Math.random() * available.length);
-  used.push(available[firstIdx]);
-  available.splice(firstIdx, 1);
-  for (var pick = 1; pick < count; pick++) {
-    var bestIdx = 0;
-    var bestDist = -1;
-    for (var j = 0; j < available.length; j++) {
-      var c = PALETTE[available[j]];
-      var minDist = Infinity;
-      for (var k = 0; k < used.length; k++) {
-        var u = PALETTE[used[k]];
-        var dr = c.r - u.r; var dg = c.g - u.g; var db = c.b - u.b;
-        var d = dr * dr + dg * dg + db * db;
-        if (d < minDist) minDist = d;
-      }
-      if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+  PALETTE_LAB.push(plVariants);
+}
+
+// The smallest perceptual gap between two palette colors across all vision
+// models — a pair that collapses under colour blindness counts as close.
+function paletteDistance(a, b) {
+  var la = PALETTE_LAB[a];
+  var lb = PALETTE_LAB[b];
+  var worst = Infinity;
+  for (var v = 0; v < la.length; v++) {
+    var dl = la[v][0] - lb[v][0];
+    var da = la[v][1] - lb[v][1];
+    var db = la[v][2] - lb[v][2];
+    var d = Math.sqrt(dl * dl + da * da + db * db) * 100;
+    if (d < worst) worst = d;
+  }
+  return worst;
+}
+
+// ─── Series order ───────────────────────────────────────────
+// Which colors get picked is one question; which series wears which is another.
+// Neighbours are what the eye compares — touching pie slices, stacked bar
+// segments, adjacent legend rows — so the picked set is ordered to maximize the
+// smallest gap between consecutive series: a greedy chain, then swap passes.
+function orderForAdjacency(indices) {
+  var n = indices.length;
+  if (n < 3) return indices.slice();
+  var i, j;
+  var dist = [];
+  for (i = 0; i < n; i++) {
+    dist.push([]);
+    for (j = 0; j < n; j++) dist[i].push(paletteDistance(indices[i], indices[j]));
+  }
+  var smallestGap = function (seq) {
+    var worst = Infinity;
+    for (var q = 0; q + 1 < seq.length; q++) {
+      if (dist[seq[q]][seq[q + 1]] < worst) worst = dist[seq[q]][seq[q + 1]];
     }
-    used.push(available[bestIdx]);
-    available.splice(bestIdx, 1);
+    return worst;
+  };
+  var taken = [];
+  for (i = 0; i < n; i++) taken.push(false);
+  var order = [0];
+  taken[0] = true;
+  for (var step = 1; step < n; step++) {
+    var last = order[order.length - 1];
+    var bestPos = -1;
+    var bestDist = -1;
+    for (j = 0; j < n; j++) {
+      if (taken[j]) continue;
+      if (dist[last][j] > bestDist) { bestDist = dist[last][j]; bestPos = j; }
+    }
+    order.push(bestPos);
+    taken[bestPos] = true;
+  }
+  var current = smallestGap(order);
+  for (var pass = 0; pass < 8; pass++) {
+    var improved = false;
+    for (i = 0; i < n - 1; i++) {
+      for (j = i + 1; j < n; j++) {
+        var swapped = order.slice();
+        var t = swapped[i]; swapped[i] = swapped[j]; swapped[j] = t;
+        var gap = smallestGap(swapped);
+        if (gap > current) { order = swapped; current = gap; improved = true; }
+      }
+    }
+    if (!improved) break;
   }
   var result = [];
-  for (var i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
+  for (i = 0; i < n; i++) result.push(indices[order[i]]);
+  return result;
+}
+
+// ─── Distinct color selection ───────────────────────────────
+// Greedy maximin: pick a random first color — that randomness is what makes
+// every generation look different — then each next color maximizes the minimum
+// perceptual distance to everything already picked. Finally hand the set to
+// orderForAdjacency so neighbouring series are the most contrasting pairs.
+function selectDistinctColors(count) {
+  var used = [];
+  var i;
+  if (count >= PALETTE.length) {
+    for (i = 0; i < PALETTE.length; i++) used.push(i);
+    for (var si = used.length - 1; si > 0; si--) {
+      var ri = Math.floor(Math.random() * (si + 1));
+      var tmp = used[si]; used[si] = used[ri]; used[ri] = tmp;
+    }
+  } else {
+    var available = [];
+    for (i = 0; i < PALETTE.length; i++) available.push(i);
+    var firstIdx = Math.floor(Math.random() * available.length);
+    used.push(available[firstIdx]);
+    available.splice(firstIdx, 1);
+    for (var pick = 1; pick < count; pick++) {
+      var bestIdx = 0;
+      var bestDist = -1;
+      for (var j = 0; j < available.length; j++) {
+        var minDist = Infinity;
+        for (var k = 0; k < used.length; k++) {
+          var d = paletteDistance(available[j], used[k]);
+          if (d < minDist) minDist = d;
+        }
+        if (minDist > bestDist) { bestDist = minDist; bestIdx = j; }
+      }
+      used.push(available[bestIdx]);
+      available.splice(bestIdx, 1);
+    }
+  }
+  used = orderForAdjacency(used);
+  var result = [];
+  for (i = 0; i < used.length; i++) result.push(PALETTE[used[i]]);
   return result;
 }
 
@@ -139,6 +265,10 @@ var LEGEND_ROW_H = 14;
 var LEGEND_ROW_GAP = 2;
 var LEGEND_MAX_ROWS_PER_PAGE = 3;
 var LEGEND_SIDE_MARGIN = 16;   // Pie only
+
+// Smallest pie diameter we will draw. Ellipse.resize() throws below 0.01,
+// so geometry must never fall to zero or go negative on small frames.
+var MIN_PIE_SIZE = 8;
 
 // ─── Shared: Selection tracking ────────────────────────────────
 var lastSelectedFrameId = null;
@@ -2000,16 +2130,27 @@ function drawPieValueLabels(parent, cx, cy, outerR, values, labelOffset) {
   return nodes;
 }
 
-function drawCenterTotal(parent, cx, cy, values) {
+function drawCenterTotal(parent, cx, cy, values, innerR) {
   var nodes = [];
   var total = 0;
   for (var i = 0; i < values.length; i++) total += values[i];
   var t = figma.createText();
   t.fontName = { family: "Inter", style: "Regular" };
-  t.fontSize = 28;
+  // Fit the total into the donut hole: 28px overflows the whole chart
+  // once the hole is only a few pixels across.
+  var fontSize = 28;
+  if (innerR > 0) fontSize = Math.max(8, Math.min(28, Math.round(innerR * 0.6)));
+  t.fontSize = fontSize;
   t.characters = formatYValue(total);
   t.fills = [{ type: "SOLID", color: { r: 0.1, g: 0.1, b: 0.1 } }];
   parent.appendChild(t);
+  if (innerR > 0) {
+    var maxTextW = innerR * 1.7;
+    while (fontSize > 6 && t.width > maxTextW) {
+      fontSize -= 1;
+      t.fontSize = fontSize;
+    }
+  }
   t.x = cx - t.width / 2; t.y = cy - t.height / 2;
   nodes.push(t);
   return nodes;
@@ -2054,9 +2195,15 @@ function generatePieChart(msg, exactData) {
   var legendLayout = preLayoutLegend(legendLabels, legendWidth, true);
   var legendExtraBottom = legendLayout.extraBottom;
 
-  var labelMargin = showLabels ? 60 : 10;
-  var pieAreaH = h - legendExtraBottom;
-  var availableSize = Math.min(w, pieAreaH) - labelMargin * 2;
+  // Margins must scale with the frame: a fixed 60px label margin makes
+  // availableSize negative on short frames (e.g. 233×95), and the negative
+  // diameter then throws in Ellipse.resize(), leaving the chart unrendered.
+  var pieAreaH = Math.max(MIN_PIE_SIZE, h - legendExtraBottom);
+  var baseSize = Math.min(w, pieAreaH);
+  var labelMargin = showLabels
+    ? Math.min(60, baseSize * 0.3)
+    : Math.min(10, baseSize * 0.1);
+  var availableSize = Math.max(MIN_PIE_SIZE, baseSize - labelMargin * 2);
   var outerR = availableSize / 2;
   var cx = w / 2; var cy = pieAreaH / 2;
   var innerR = (pieStyle === "donut") ? outerR * (innerRadiusPct / 100) : 0;
@@ -2073,12 +2220,12 @@ function generatePieChart(msg, exactData) {
   groupNodes(sliceNodes, container, "Slices");
 
   if (showLabels) {
-    var labelNodes = drawPieValueLabels(container, cx, cy, outerR, values, 30);
+    var labelNodes = drawPieValueLabels(container, cx, cy, outerR, values, Math.max(6, labelMargin / 2));
     if (labelNodes.length > 1) { var g = figma.group(labelNodes, container); g.name = "Labels"; }
   }
 
   if (showTotal && pieStyle === "donut") {
-    var totalNodes = drawCenterTotal(container, cx, cy, values);
+    var totalNodes = drawCenterTotal(container, cx, cy, values, innerR);
     if (totalNodes.length > 0) { var g = figma.group(totalNodes, container); g.name = "Center Label"; }
   }
 
@@ -2126,13 +2273,16 @@ figma.ui.onmessage = async function (msg) {
   }
   if (msg.type === "generate") {
     await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-    dispatchChart(msg, null);
+    // Surface render failures instead of silently drawing nothing.
+    try { dispatchChart(msg, null); }
+    catch (e) { figma.notify("Chart not drawn: " + (e && e.message ? e.message : String(e)), { error: true }); }
     return;
   }
   if (msg.type === "paste") {
     if (!msg.chartData) return;
     await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-    dispatchChart(msg.chartData, msg.chartData);
+    try { dispatchChart(msg.chartData, msg.chartData); }
+    catch (e) { figma.notify("Chart not drawn: " + (e && e.message ? e.message : String(e)), { error: true }); }
     return;
   }
 };

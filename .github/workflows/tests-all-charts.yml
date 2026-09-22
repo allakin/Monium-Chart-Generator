@@ -1,0 +1,28 @@
+name: All Charts tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Monium All Charts Generator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # The combined generator is exercised by every suite, so this job runs
+      # the whole test matrix: all four chart types plus the shared suites
+      # (harness, copy/paste, layer parsing, placement, frame sizes).
+      - run: npm test
