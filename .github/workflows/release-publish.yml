@@ -134,15 +134,17 @@ jobs:
           git push origin main
           git push origin "${{ steps.ver.outputs.next }}"
 
+          # Имя репозитория берём из GITHUB_REPOSITORY, чтобы переименование
+          # не оставило в заголовках старое название.
           gh release create "${{ steps.ver.outputs.next }}" \
             --target main \
-            --title "${{ steps.ver.outputs.next }}" \
+            --title "Release ${GITHUB_REPOSITORY#*/} ${{ steps.ver.outputs.next }}" \
             --notes-file /tmp/notes.md
 
           # Черновик выполнил свою роль — убираем, чтобы он не выглядел как
           # ещё один невыпущенный релиз.
           gh release list --limit 50 --json tagName,isDraft,name \
-            | jq -r '.[] | select(.isDraft) | select(.name | startswith("Черновик")) | .tagName' \
+            | jq -r '.[] | select(.isDraft) | select(.name | endswith("(черновик)")) | .tagName' \
             | while read -r stale; do gh release delete "$stale" --yes; done
 
       - name: Сводка

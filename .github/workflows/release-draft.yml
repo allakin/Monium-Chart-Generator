@@ -91,9 +91,10 @@ jobs:
 
           # Предлагаемая версия может смениться (minor → major), поэтому проще
           # снести свой прошлый черновик и создать новый, чем обновлять на
-          # месте. Фильтр по имени страхует чужие черновики.
+          # месте. Суффикс «(черновик)» в имени страхует чужие черновики от
+          # удаления и отличает черновик от выпущенного релиза.
           gh release list --limit 50 --json tagName,isDraft,name \
-            | jq -r '.[] | select(.isDraft) | select(.name | startswith("Черновик")) | .tagName' \
+            | jq -r '.[] | select(.isDraft) | select(.name | endswith("(черновик)")) | .tagName' \
             | while read -r stale; do
                 echo "Удаляю прошлый черновик $stale"
                 gh release delete "$stale" --yes
@@ -101,10 +102,11 @@ jobs:
 
           # Тег в этот момент не создаётся: у черновика он появится только при
           # публикации. target=main — чтобы тег лёг на main, как все прошлые.
+          # Заголовок повторяет формат выпущенного релиза плюс «(черновик)».
           gh release create "${{ steps.body.outputs.next }}" \
             --draft \
             --target main \
-            --title "Черновик ${{ steps.body.outputs.next }}" \
+            --title "Release ${GITHUB_REPOSITORY#*/} ${{ steps.body.outputs.next }} (черновик)" \
             --notes-file /tmp/body.md
 
       - name: Сводка
