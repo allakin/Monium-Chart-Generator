@@ -1,0 +1,126 @@
+name: Release draft
+
+# Бегает по каждому пушу в develop-temp: гоняет тесты и держит актуальным
+# один черновик релиза со списком того, что накопилось с последнего тега.
+# Ничего не публикует и не создаёт тегов — выпуск делает release-publish.yml.
+
+on:
+  push:
+    branches: [develop-temp]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-draft
+  cancel-in-progress: true
+
+jobs:
+  draft:
+    name: Обновить черновик релиза
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # нужны все теги, чтобы найти последний релиз
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Тесты не должны ронять шаг сборки черновика: даже на красной ветке
+      # полезно видеть, что именно в ней накопилось. Статус проставляется в
+      # тело черновика, а джоба всё равно падает — последним шагом.
+      - name: Тесты
+        id: tests
+        continue-on-error: true
+        run: npm test
+
+      - name: Собрать тело черновика
+        id: body
+        run: |
+          set -euo pipefail
+
+          LAST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "::error::В репозитории нет тегов vX.Y — не от чего считать релиз"
+            exit 1
+          fi
+
+          BASE=${LAST_TAG#v}
+          MAJOR=${BASE%%.*}
+          REST=${BASE#*.}
+          MINOR=${REST%%.*}
+          NEXT="v${MAJOR}.$((MINOR + 1))"
+
+          node scripts/release-notes.mjs \
+            --from "$LAST_TAG" --to HEAD --repo "$GITHUB_REPOSITORY" > /tmp/notes.md
+
+          COUNT=$(git rev-list --no-merges --count "$LAST_TAG"..HEAD)
+
+          if [ "${{ steps.tests.outcome }}" = "success" ]; then
+            STATUS='✅ тесты зелёные'
+          else
+            STATUS='❌ тесты падают — выпускать нельзя'
+          fi
+
+          {
+            printf '> **Черновик, не релиз.** Копится автоматически на каждый пуш в `develop-temp`.\n'
+            printf '> Чтобы выпустить: смержите `develop-temp` в `main`, затем запустите воркфлоу\n'
+            printf '> [Publish release](../../actions/workflows/release-publish.yml) с ветки `main`.\n'
+            printf '> Кнопка «Publish release» на этой странице поставит тег на текущий `main`, в котором\n'
+            printf '> изменений ниже может ещё не быть.\n\n'
+            printf -- '- Предлагаемая версия: **%s** (предыдущая — %s)\n' "$NEXT" "$LAST_TAG"
+            printf -- '- Коммитов с прошлого релиза: **%s**\n' "$COUNT"
+            printf -- '- Состояние ветки: %s\n' "$STATUS"
+            printf -- '- Последний коммит: %s\n\n' "$(git log -1 --format='%s (%h)')"
+            printf -- '---\n\n'
+            cat /tmp/notes.md
+          } > /tmp/body.md
+
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "last=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Пересоздать черновик
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Предлагаемая версия может смениться (minor → major), поэтому проще
+          # снести свой прошлый черновик и создать новый, чем обновлять на
+          # месте. Фильтр по имени страхует чужие черновики.
+          gh release list --limit 50 --json tagName,isDraft,name \
+            | jq -r '.[] | select(.isDraft) | select(.name | startswith("Черновик")) | .tagName' \
+            | while read -r stale; do
+                echo "Удаляю прошлый черновик $stale"
+                gh release delete "$stale" --yes
+              done
+
+          # Тег в этот момент не создаётся: у черновика он появится только при
+          # публикации. target=main — чтобы тег лёг на main, как все прошлые.
+          gh release create "${{ steps.body.outputs.next }}" \
+            --draft \
+            --target main \
+            --title "Черновик ${{ steps.body.outputs.next }}" \
+            --notes-file /tmp/body.md
+
+      - name: Сводка
+        run: |
+          {
+            printf '## Черновик %s обновлён\n\n' "${{ steps.body.outputs.next }}"
+            printf -- '- С прошлого релиза (%s): %s коммитов\n' \
+              "${{ steps.body.outputs.last }}" "${{ steps.body.outputs.count }}"
+            printf -- '- Тесты: %s\n\n' "${{ steps.tests.outcome }}"
+            cat /tmp/notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Черновик обновлён — но если тесты упали, джоба должна быть красной,
+      # иначе зелёная галочка на ветке будет врать.
+      - name: Проверить результат тестов
+        if: steps.tests.outcome != 'success'
+        run: |
+          echo "::error::Тесты в develop-temp падают — черновик обновлён, но релиз выпускать нельзя"
+          exit 1

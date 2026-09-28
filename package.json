@@ -11,7 +11,11 @@
     "test:area": "node --test tests/area.test.js",
     "test:bar": "node --test tests/bar.test.js",
     "test:sizes": "node --test tests/small-frames.test.js",
-    "test:ui": "node --test tests/copy-loader.test.js"
+    "test:ui": "node --test tests/copy-loader.test.js",
+    "test:release": "node --test tests/release-scripts.test.js",
+    "release:notes": "node scripts/release-notes.mjs",
+    "release:bump": "node scripts/bump-version.mjs",
+    "release:version": "node scripts/bump-version.mjs --current"
   },
   "engines": {
     "node": ">=20"

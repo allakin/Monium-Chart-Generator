@@ -1,0 +1,165 @@
+name: Publish release
+
+# Выпуск релиза одной кнопкой. Запускается вручную с ветки main — после того
+# как PR из develop-temp смержен. Делает всё, что раньше делалось руками:
+# прогон тестов, версия в футерах плагинов, CHANGELOG, тег, GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Какую часть версии поднять
+        type: choice
+        options: [minor, major, patch]
+        default: minor
+      version:
+        description: Явная версия, например 2.5 (переопределяет bump)
+        type: string
+        required: false
+      dry_run:
+        description: Прогон без коммита, тега и публикации
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false # релиз на середине прерывать нельзя
+
+jobs:
+  publish:
+    name: Выпустить релиз
+    runs-on: ubuntu-latest
+    steps:
+      # Все прошлые теги стоят на merge-коммитах в main. Релиз с другой ветки
+      # создал бы тег на коде, которого в main нет.
+      - name: Проверить ветку
+        if: github.ref_name != 'main'
+        run: |
+          echo "::error::Запущено с ветки '${{ github.ref_name }}'. Сначала смержите develop-temp в main, затем запустите этот воркфлоу с main."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Гейт, а не информация: красные тесты — релиза нет.
+      - name: Тесты
+        run: npm test
+
+      - name: Посчитать версию
+        id: ver
+        run: |
+          set -euo pipefail
+
+          LAST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "::error::В репозитории нет тегов vX.Y — не от чего считать версию"
+            exit 1
+          fi
+
+          EXPLICIT="${{ inputs.version }}"
+          if [ -n "$EXPLICIT" ]; then
+            NEXT="v${EXPLICIT#v}"
+          else
+            BASE=${LAST_TAG#v}
+            MAJOR=${BASE%%.*}
+            REST=${BASE#*.}
+            MINOR=${REST%%.*}
+            PATCH=0
+            case "$REST" in *.*) PATCH=${REST#*.} ;; esac
+
+            case "${{ inputs.bump }}" in
+              major) NEXT="v$((MAJOR + 1)).0" ;;
+              minor) NEXT="v${MAJOR}.$((MINOR + 1))" ;;
+              patch) NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+            esac
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            echo "::error::Тег $NEXT уже существует"
+            exit 1
+          fi
+
+          if [ "$(git rev-list --count "$LAST_TAG"..HEAD)" = "0" ]; then
+            echo "::error::В main нет коммитов после $LAST_TAG — выпускать нечего"
+            exit 1
+          fi
+
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "last=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Выпускаем $NEXT (предыдущий — $LAST_TAG)"
+
+      - name: Собрать заметки
+        run: |
+          set -euo pipefail
+          node scripts/release-notes.mjs \
+            --from "${{ steps.ver.outputs.last }}" --to HEAD --repo "$GITHUB_REPOSITORY" > /tmp/notes.md
+          cat /tmp/notes.md
+
+      - name: Проставить версию и обновить CHANGELOG
+        run: |
+          set -euo pipefail
+          node scripts/bump-version.mjs "${{ steps.ver.outputs.next }}"
+          node scripts/changelog-prepend.mjs "${{ steps.ver.outputs.next }}" /tmp/notes.md
+          git --no-pager diff --stat
+
+      # Футер с версией участвует в разборе ui.html в тестах, поэтому после
+      # правки прогоняем ещё раз — это полсекунды.
+      - name: Тесты после бампа
+        run: |
+          npm test
+          node scripts/bump-version.mjs --check "${{ steps.ver.outputs.next }}"
+
+      - name: Коммит, тег и публикация
+        if: inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add -A
+          git commit -m "chore(release): ${{ steps.ver.outputs.next }}"
+          git tag "${{ steps.ver.outputs.next }}"
+          git push origin main
+          git push origin "${{ steps.ver.outputs.next }}"
+
+          gh release create "${{ steps.ver.outputs.next }}" \
+            --target main \
+            --title "${{ steps.ver.outputs.next }}" \
+            --notes-file /tmp/notes.md
+
+          # Черновик выполнил свою роль — убираем, чтобы он не выглядел как
+          # ещё один невыпущенный релиз.
+          gh release list --limit 50 --json tagName,isDraft,name \
+            | jq -r '.[] | select(.isDraft) | select(.name | startswith("Черновик")) | .tagName' \
+            | while read -r stale; do gh release delete "$stale" --yes; done
+
+      - name: Сводка
+        run: |
+          {
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              printf '## Прогон без публикации: %s\n\n' "${{ steps.ver.outputs.next }}"
+              printf 'Ничего не закоммичено и не опубликовано. Заметки, которые бы ушли в релиз:\n\n'
+            else
+              printf '## Релиз %s опубликован\n\n' "${{ steps.ver.outputs.next }}"
+            fi
+            printf -- '- Предыдущая версия: %s\n' "${{ steps.ver.outputs.last }}"
+            printf -- '- Версия в футерах плагинов и стайлгайде: %s\n\n' "${{ steps.ver.outputs.next }}"
+            cat /tmp/notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Напомнить про синхронизацию develop-temp
+        if: inputs.dry_run == false
+        run: |
+          echo "::notice::В main лежит релизный коммит с новой версией. Подтяните его в develop-temp (git merge origin/main), иначе следующий бамп начнётся со старого футера."
