@@ -20,7 +20,7 @@ description: Прогнать автотесты плагинов Monium Chart G
 - **header:** `Что тестировать`
 - **question:** `Какие плагины прогнать?`
 - **options:**
-  1. `Все сразу (рекомендуется)` — 503 теста, ~0.5 с, полная картина
+  1. `Все сразу (рекомендуется)` — 559 тестов, ~1.2 с, полная картина
   2. `Отдельные типы чартов` — уточню, какие именно
   3. `Только изменённые` — по `git status` соберу затронутые плагины
   4. `Только матрица размеров` — быстрая проверка на «график не отображается»
@@ -65,7 +65,7 @@ node --test tests/small-frames.test.js
 ```bash
 node --test --test-name-pattern "pie" \
   tests/pie.test.js tests/small-frames.test.js tests/copy-paste.test.js \
-  tests/placement.test.js tests/layer-parsing.test.js
+  tests/copy-loader.test.js tests/placement.test.js tests/layer-parsing.test.js
 ```
 
 Когда менялся общий код или хелперы — обязательно добавить:

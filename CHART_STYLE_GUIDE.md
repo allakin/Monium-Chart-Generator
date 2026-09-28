@@ -592,7 +592,7 @@ The primary use case is building visually-identical chart pairs/grids for side-b
 ### User Flow
 1. User selects a frame containing a previously generated chart.
 2. Plugin shows both **"Get values from chart"** (existing) and **"Copy chart"** (new) buttons.
-3. User clicks **"Copy chart"** → full chart data is captured to the plugin's in-memory clipboard. A yellow banner appears with a brief summary (e.g. `"Copied: 3 lines · Smooth"`) and an `×` to clear.
+3. User clicks **"Copy chart"** → full chart data is captured to the plugin's in-memory clipboard. A yellow banner appears, first with a spinner and `"Reading chart data…"`, then (after ~450 ms) with a brief summary (e.g. `"Copied: 3 lines · Smooth"`) and an `×` to clear. See "Copy loader" below.
 4. User selects another frame (or stays on the same one). The clipboard persists across selection changes.
 5. User clicks **"Paste exact copy"** → identical chart is generated in the target frame, replacing any chart already present there. The clipboard remains, so multiple pastes are supported (one source → many identical copies in different frames).
 
@@ -773,6 +773,17 @@ figma.ui.onmessage = async function (msg) {
 }
 .clipboard-box .clear-btn:hover { color: #1A1A1A; }
 
+/* Loading state of the clipboard box (see "Copy loader" below) */
+.clipboard-box .spinner {
+  display: none; width: 11px; height: 11px; flex-shrink: 0;
+  border: 1.5px solid #EBD6A6; border-top-color: #7A5A0F; border-radius: 50%;
+  animation: clipboard-spin 0.6s linear infinite;
+}
+.clipboard-box.loading .spinner { display: block; }
+.clipboard-box.loading .summary { opacity: 0.7; }
+.clipboard-box.loading .clear-btn { visibility: hidden; }
+@keyframes clipboard-spin { to { transform: rotate(360deg); } }
+
 .btn-paste {
   width: 100%; margin-top: 8px; padding: 8px 0; border: none; border-radius: 6px;
   font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
@@ -790,6 +801,7 @@ figma.ui.onmessage = async function (msg) {
 
 <div class="clipboard-box" id="clipboardBox">
   <div class="row">
+    <span class="spinner"></span>
     <span class="summary" id="clipboardSummary">Chart copied</span>
     <button class="clear-btn" onclick="clearCopy()" title="Clear clipboard">×</button>
   </div>
@@ -800,6 +812,8 @@ figma.ui.onmessage = async function (msg) {
 **JS** (added to the existing `<script>` block):
 ```js
 var copiedChart = null;
+var copyLoaderTimer = null;
+var COPY_LOADER_MS = 450;
 
 function copyChart() {
   hideRegenError();
@@ -810,8 +824,24 @@ function copyChart() {
     return;
   }
   copiedChart = JSON.parse(JSON.stringify(storedChartData));
-  updateClipboardUI();
+  showClipboardLoading();
   resizeUI();
+  if (copyLoaderTimer) clearTimeout(copyLoaderTimer);
+  copyLoaderTimer = setTimeout(function () {
+    copyLoaderTimer = null;
+    updateClipboardUI();
+    resizeUI();
+    // notify goes here too, so the toast lands together with the summary
+  }, COPY_LOADER_MS);
+}
+
+function showClipboardLoading() {
+  var box = document.getElementById('clipboardBox');
+  box.classList.add('loading');
+  box.style.display = 'block';
+  document.getElementById('clipboardSummary').textContent = 'Reading chart data…';
+  document.getElementById('copyBtn').disabled = true;
+  document.getElementById('pasteBtn').disabled = true;
 }
 
 function pasteChart() {
@@ -820,30 +850,47 @@ function pasteChart() {
 }
 
 function clearCopy() {
+  if (copyLoaderTimer) { clearTimeout(copyLoaderTimer); copyLoaderTimer = null; }
   copiedChart = null;
   updateClipboardUI();
   resizeUI();
 }
 
 function updateClipboardUI() {
+  // While the copy loader runs the box must stay in its loading state —
+  // a selection update arriving meanwhile would otherwise cut it short.
+  if (copyLoaderTimer) return;
   var box = document.getElementById('clipboardBox');
+  box.classList.remove('loading');
+  document.getElementById('copyBtn').disabled = false;
+  document.getElementById('pasteBtn').disabled = false;
   if (copiedChart) {
     // Adapt summary to chart-specific field names
-    var n = copiedChart.linesCount || copiedChart.areasCount || copiedChart.barsCount || copiedChart.segmentsCount || 0;
     var style = copiedChart.lineStyle || copiedChart.areaStyle || copiedChart.barMode || copiedChart.pieStyle || '';
     var label = style ? (style.charAt(0).toUpperCase() + style.slice(1)) : '';
-    var noun = copiedChart.linesCount ? 'line'
-            : copiedChart.areasCount ? 'area'
-            : copiedChart.barsCount ? 'bar series'
-            : 'segment';
     document.getElementById('clipboardSummary').textContent =
-      'Copied: ' + n + ' ' + noun + (n === 1 ? '' : 's') + (label ? ' · ' + label : '');
+      'Copied: ' + copiedCountLabel(copiedChart) + (label ? ' · ' + label : '');
     box.style.display = 'block';
   } else {
     box.style.display = 'none';
   }
 }
+
+// "5 bar series", "2 lines", "1 segment" — "bar series" is already plural,
+// so it never takes the trailing "s".
+function copiedCountLabel(c) {
+  var n = c.linesCount || c.areasCount || c.barsCount || c.segmentsCount || 0;
+  var noun = c.linesCount ? 'line'
+          : c.areasCount ? 'area'
+          : c.barsCount ? 'bar series'
+          : 'segment';
+  var plural = (noun === 'bar series') ? noun : noun + 's';
+  return n + ' ' + (n === 1 ? noun : plural);
+}
 ```
+
+### Copy loader
+Capturing the chart is instant, so without feedback the yellow box silently swaps its text and the user cannot tell which chart is now on the clipboard. On "Copy chart" the box therefore opens in a **loading state** for `COPY_LOADER_MS` (450 ms): a spinner replaces the `×`, the summary reads `Reading chart data…`, and both `copyBtn` / `pasteBtn` are disabled. When the timer fires, the real summary (`Copied: 5 bar series · Stacked`) and the `figma.notify` toast appear together. Single-type plugins use their own noun directly; the unified plugin derives it from the count fields via `copiedCountLabel`.
 
 In `window.onmessage`, alongside the existing `regenBtn` handling, also show/hide `copyBtn` (same condition as `regenBtn`) and call `updateClipboardUI()` once.
 

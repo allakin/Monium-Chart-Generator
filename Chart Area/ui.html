@@ -103,6 +103,23 @@
     }
     .clipboard-box .clear-btn:hover { color: #1A1A1A; }
 
+    /* Loading state: the box opens with a spinner and only then swaps in the
+       summary, so the content change is visible and it is clear what was copied. */
+    .clipboard-box .spinner {
+      display: none;
+      width: 11px;
+      height: 11px;
+      flex-shrink: 0;
+      border: 1.5px solid #EBD6A6;
+      border-top-color: #7A5A0F;
+      border-radius: 50%;
+      animation: clipboard-spin 0.6s linear infinite;
+    }
+    .clipboard-box.loading .spinner { display: block; }
+    .clipboard-box.loading .summary { opacity: 0.7; }
+    .clipboard-box.loading .clear-btn { visibility: hidden; }
+    @keyframes clipboard-spin { to { transform: rotate(360deg); } }
+
     .btn-paste {
       width: 100%;
       margin-top: 8px;
@@ -236,6 +253,7 @@
 
   <div class="clipboard-box" id="clipboardBox">
     <div class="row">
+      <span class="spinner"></span>
       <span class="summary" id="clipboardSummary">Chart copied</span>
       <button class="clear-btn" onclick="clearCopy()" title="Clear clipboard">×</button>
     </div>
@@ -352,6 +370,8 @@
     var replaceMode = false;
     var copiedChart = null;
     var pendingPasteData = null;
+    var copyLoaderTimer = null;
+    var COPY_LOADER_MS = 450;
 
     function setInsertEnabled(enabled) {
       document.getElementById('insertBtn').disabled = !enabled;
@@ -379,10 +399,28 @@
         return;
       }
       copiedChart = JSON.parse(JSON.stringify(storedChartData));
-      updateClipboardUI();
+      // Show the clipboard box in a loading state first: copying is instant, but
+      // without the pause the box swaps its contents unnoticed and it is unclear
+      // which chart data is now on the clipboard.
+      showClipboardLoading();
       resizeUI();
-      var n = copiedChart.areasCount || 0;
-      parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — ' + n + ' area' + (n === 1 ? '' : 's') + ' ready to paste' } }, '*');
+      if (copyLoaderTimer) clearTimeout(copyLoaderTimer);
+      copyLoaderTimer = setTimeout(function () {
+        copyLoaderTimer = null;
+        updateClipboardUI();
+        resizeUI();
+        var n = copiedChart.areasCount || 0;
+        parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — ' + n + ' area' + (n === 1 ? '' : 's') + ' ready to paste' } }, '*');
+      }, COPY_LOADER_MS);
+    }
+
+    function showClipboardLoading() {
+      var box = document.getElementById('clipboardBox');
+      box.classList.add('loading');
+      box.style.display = 'block';
+      document.getElementById('clipboardSummary').textContent = 'Reading chart data…';
+      document.getElementById('copyBtn').disabled = true;
+      document.getElementById('pasteBtn').disabled = true;
     }
 
     function pasteChart() {
@@ -398,13 +436,20 @@
     }
 
     function clearCopy() {
+      if (copyLoaderTimer) { clearTimeout(copyLoaderTimer); copyLoaderTimer = null; }
       copiedChart = null;
       updateClipboardUI();
       resizeUI();
     }
 
     function updateClipboardUI() {
+      // While the copy loader runs the box must stay in its loading state —
+      // a selection update arriving meanwhile would otherwise cut it short.
+      if (copyLoaderTimer) return;
       var box = document.getElementById('clipboardBox');
+      box.classList.remove('loading');
+      document.getElementById('copyBtn').disabled = false;
+      document.getElementById('pasteBtn').disabled = false;
       if (copiedChart) {
         var n = copiedChart.areasCount || (copiedChart.allSeries ? copiedChart.allSeries.length : 0);
         var style = copiedChart.areaStyle || 'smooth';
