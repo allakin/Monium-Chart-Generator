@@ -103,10 +103,12 @@ jobs:
           # Тег в этот момент не создаётся: у черновика он появится только при
           # публикации. target=main — чтобы тег лёг на main, как все прошлые.
           # Заголовок повторяет формат выпущенного релиза плюс «(черновик)».
+          # Короткий намеренно — в боковом списке Releases мало места, и номер
+          # версии должен быть виден до обрезки.
           gh release create "${{ steps.body.outputs.next }}" \
             --draft \
             --target main \
-            --title "Release ${GITHUB_REPOSITORY#*/} ${{ steps.body.outputs.next }} (черновик)" \
+            --title "Release ${{ steps.body.outputs.next }} (черновик)" \
             --notes-file /tmp/body.md
 
       - name: Сводка

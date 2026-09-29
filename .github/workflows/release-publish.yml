@@ -134,11 +134,12 @@ jobs:
           git push origin main
           git push origin "${{ steps.ver.outputs.next }}"
 
-          # Имя репозитория берём из GITHUB_REPOSITORY, чтобы переименование
-          # не оставило в заголовках старое название.
+          # Заголовок короткий намеренно: в боковом списке Releases на него
+          # отведено мало места, и длинное название репозитория вытесняло
+          # номер версии в многоточие.
           gh release create "${{ steps.ver.outputs.next }}" \
             --target main \
-            --title "Release ${GITHUB_REPOSITORY#*/} ${{ steps.ver.outputs.next }}" \
+            --title "Release ${{ steps.ver.outputs.next }}" \
             --notes-file /tmp/notes.md
 
           # Черновик выполнил свою роль — убираем, чтобы он не выглядел как
