@@ -306,11 +306,18 @@ active: background: #4D7CFE; color: #fff;
 - **Fill opacity** number input: `0.05–1.0`, default `1.0`, step `0.05`
 - No **Events** checkboxes (not applicable to pie charts)
 
+### Series Color Picker
+- Checkbox "Custom line colors" / "Custom area colors" / "Custom bar colors" / "Custom segment colors" below the series count; when on, one row per series: swatch, name (with the legend label when the legend is on), "Palette · #HEX" / "Custom · #HEX" / "Auto", × to unpin.
+- Enabling fills every row at once: with a chart selected — its current colors, otherwise colors suggested by the plugin's own palette selection.
+- Clicking a row opens the 68-color palette grid (12 columns, sorted by hue starting from red, near-grays last) with an "Auto — generate a new color" button; the grid closes on a pick, on Auto, on an outside click and on Esc.
+- With a chart selected a pick repaints it at once (series + legend marker, opacity and geometry kept); otherwise it applies on "Insert chart". A hint line under the rows says which; failures show there in red.
+- Off-palette colors (older palettes) are shown and kept as hex.
+
 ### Section Spacing
 - `16px` between all sections (fields, groups, buttons)
 
 ### Footer
-- `"Monium Design System v2.4"` — plain text, no link
+- `"Monium Design System v2.5"` — plain text, no link
 - `font-size: 10px; color: #AAAAAA; text-align: center`
 
 ### Header Subtitle — brand + Documentation link
@@ -408,7 +415,12 @@ container.setPluginData("chartParams", JSON.stringify({
   cornerRadius: cornerRadius, // 0–50 (donut only)
   segmentGap: segmentGap,    // 0–10 (degrees)
   showLabels: showLabels,    // boolean
-  showTotal: showTotal        // boolean (donut only)
+  showTotal: showTotal,       // boolean (donut only)
+  // Series color picker (all types):
+  colors: colors,            // drawn series colors, {r,g,b} 0..1
+  lineColors: lineColors,    // or areaColors / barColors / segmentColors:
+                             // per series "#RRGGBB" pinned by the user, null = Auto
+  customColors: customColors // boolean — picker on; inferred from pins when absent
 }));
 ```
 
@@ -417,7 +429,9 @@ container.setPluginData("chartParams", JSON.stringify({
 2. **Fallback** (for old charts without plugin data): parse from layer structure using named groups
 
 ### Chart Detection — `findChartFrame(frame)`
-Checks if the selected frame IS the chart container or CONTAINS one as a direct child:
+> Current plugins go further than the snippet below: breadth-first search through nested frames, groups, instances and sections (cap 300 nodes); a frame renamed by the designer still counts when it carries `chartParams`; a selected layer inside a chart resolves to that chart; a nested chart is regenerated in its own parent, at its layer index and size.
+
+Minimal form — the selected frame IS the chart container or CONTAINS one as a direct child:
 ```js
 function findChartFrame(frame) {
   // Check if the frame itself is the chart (match by container name, e.g. "Chart Line", "Chart Bar")

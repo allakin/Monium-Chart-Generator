@@ -206,6 +206,116 @@
       vertical-align: middle;
     }
 
+    /* Bar color picker: one row per series, palette grid opens under the row. */
+    .color-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border: 1.5px solid #E0E0E0;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .color-row:hover { border-color: #C8C8CC; }
+    .color-row.open { border-color: #4D7CFE; }
+    .color-swatch {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      border-radius: 4px;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+    }
+    /* Auto without a known color yet: diagonal stripes instead of a fill. */
+    .color-swatch.auto-empty {
+      background: repeating-linear-gradient(45deg, #E0E0E0 0 3px, #F7F8FA 3px 6px);
+    }
+    .color-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #1A1A1A;
+    }
+    .color-value {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #808080;
+      font-variant-numeric: tabular-nums;
+    }
+    .color-reset {
+      flex-shrink: 0;
+      border: none;
+      background: transparent;
+      color: #808080;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .color-reset:hover { color: #1A1A1A; }
+    .palette-panel {
+      padding: 8px;
+      border: 1.5px solid #E0E0E0;
+      border-radius: 6px;
+      background: #fff;
+    }
+    .palette-auto {
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 5px 0;
+      border: none;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      color: #808080;
+      background: #EEEEF0;
+      cursor: pointer;
+    }
+    .palette-auto:hover { background: #E0E0E0; }
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 4px;
+    }
+    .palette-color {
+      position: relative;
+      aspect-ratio: 1;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 0;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+      transition: transform 0.1s;
+    }
+    .palette-color:hover { transform: scale(1.15); }
+    .palette-color.selected { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #1A1A1A; }
+    /* Already pinned on another series — still selectable, just marked. */
+    .palette-color.used::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 4px;
+      height: 4px;
+      margin: -2px 0 0 -2px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+    }
+    .palette-empty { font-size: 11px; color: #808080; }
+    .color-hint { margin-top: 6px; font-size: 11px; color: #808080; }
+    .color-hint.error { color: #E53935; }
+
     .btn {
       width: 100%;
       margin-top: 16px;
@@ -278,6 +388,21 @@
   <div class="field">
     <label>Series count (1–20)</label>
     <input type="number" id="barsInput" value="3" min="1" max="20">
+  </div>
+
+  <div class="field">
+    <label>Bar colors</label>
+    <div class="checkbox-group">
+      <label class="checkbox-row">
+        <input type="checkbox" id="customColorsCheck"> Custom bar colors
+      </label>
+    </div>
+  </div>
+
+  <div class="field" id="barColorsField" style="display: none;">
+    <label>Click a series to pick its color from the palette</label>
+    <div class="color-list" id="barColorsList"></div>
+    <div class="color-hint" id="barColorsHint"></div>
   </div>
 
   <div class="field">
@@ -368,7 +493,7 @@
 
   <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
 
-  <div class="footer">Monium Design System v2.4</div>
+  <div class="footer">Monium Design System v2.5</div>
 
   <script>
     var DEFAULTS = {
@@ -518,6 +643,7 @@
       document.getElementById('barGapRow').style.display = (mode !== 'grouped') ? '' : 'none';
       if (!showDense) document.getElementById('denseCheck').checked = false;
       updateSeriesInput();
+      if (barColorsReady) onSeriesCountChanged();
     }
 
     function updateSeriesInput() {
@@ -577,6 +703,7 @@
       // missing positions based on the current series count. Existing labels are
       // preserved (sync only appends/truncates).
       syncLegendLabelsToCount();
+      renderBarColors();
       resizeUI();
     });
 
@@ -584,7 +711,7 @@
     // append default "Series N" entries; when user decreases, truncate the tail.
     function syncLegendLabelsToCount() {
       if (!document.getElementById('showLegendCheck').checked) return;
-      var newCount = Math.max(1, Math.min(20, parseInt(document.getElementById('barsInput').value) || 1));
+      var newCount = getSeriesCount();
       var legendEl = document.getElementById('legendInput');
       var labels = legendEl.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
       if (newCount > labels.length) {
@@ -598,7 +725,434 @@
 
     // 'change' (not 'input'): fires after value is committed (blur, Enter, or spinner click),
     // so typing "15" digit-by-digit doesn't truncate labels at the intermediate "1" state.
-    document.getElementById('barsInput').addEventListener('change', syncLegendLabelsToCount);
+    document.getElementById('barsInput').addEventListener('change', function () {
+      syncLegendLabelsToCount();
+      onSeriesCountChanged();
+    });
+
+    // ═══════════════════════════════════════════════
+    //  Bar color picker
+    // ═══════════════════════════════════════════════
+    // The palette comes from code.js (the same list the chart is generated
+    // from), requested once on load. barColorState[i] is the pinned hex of
+    // series i or null for Auto; autoColorPreview[i] is the color the series
+    // currently has on the chart, shown for Auto rows.
+    var paletteHex = [];
+    var paletteDisplay = []; // paletteHex sorted by hue for the grid
+    var barColorState = [];
+    var autoColorPreview = [];
+    var openColorRow = -1;
+    var suggestRequestId = 0;
+    var pendingSuggestSlots = [];
+    var pendingSuggestLive = false;
+
+    // Series actually drawn: Normal mode always draws a single series, whatever
+    // the (disabled) Series count field says.
+    function getSeriesCount() {
+      if (getBarMode() === 'normal') return 1;
+      return Math.max(1, Math.min(20, parseInt(document.getElementById('barsInput').value) || 1));
+    }
+
+    function rgbToHex(c) {
+      if (!c) return null;
+      var hex = '#';
+      [c.r, c.g, c.b].forEach(function (v) {
+        var n = Math.max(0, Math.min(255, Math.round(v * 255)));
+        hex += (n < 16 ? '0' : '') + n.toString(16).toUpperCase();
+      });
+      return hex;
+    }
+
+    function normalizeHex(hex) {
+      return (typeof hex === 'string' && /^#[0-9a-f]{6}$/i.test(hex.trim())) ? hex.trim().toUpperCase() : null;
+    }
+
+    function syncBarColorsToCount() {
+      var n = getSeriesCount();
+      if (barColorState.length > n) barColorState = barColorState.slice(0, n);
+      while (barColorState.length < n) barColorState.push(null);
+      if (openColorRow >= n) openColorRow = -1;
+    }
+
+    // A user's pick for one series. When a chart is selected the color is applied
+    // to it at once (its bars + legend dot), without regenerating the chart.
+    function setBarColor(index, hex) {
+      syncBarColorsToCount();
+      if (index < 0 || index >= barColorState.length) return;
+      barColorState[index] = normalizeHex(hex);
+      renderBarColors();
+      recolorSelectedChart(index);
+    }
+
+    // Series the selected chart actually draws; rows past it (the form asks for
+    // more than the chart has) only apply on "Insert chart".
+    function selectedChartSeries() {
+      if (!storedChartData) return 0;
+      if (storedChartData.colors && storedChartData.colors.length) return storedChartData.colors.length;
+      return storedChartData.barsCount || 0;
+    }
+
+    function recolorSelectedChart(index) {
+      if (!storedChartData || !document.getElementById('customColorsCheck').checked) return;
+      if (index >= selectedChartSeries()) return;
+      var hex = barColorState[index];
+      if (hex) autoColorPreview[index] = hex;
+      recolorError = '';
+      updateBarColorsHint();
+      parent.postMessage({ pluginMessage: { type: 'recolor', index: index, color: hex } }, '*');
+    }
+
+    // "Auto" button: a fresh generated color for this series — different from the
+    // one it has now and apart from the other series, chosen by code.js the same
+    // way generation picks colors.
+    function generateBarColor(index) {
+      syncBarColorsToCount();
+      if (index < 0 || index >= barColorState.length) return;
+      var current = barColorState[index] || normalizeHex(autoColorPreview[index]);
+      var others = barColorState.slice();
+      others[index] = null;
+      suggestRequestId++;
+      pendingSuggestSlots = [index];
+      pendingSuggestLive = true;
+      parent.postMessage({ pluginMessage: {
+        type: 'suggest-colors',
+        requestId: suggestRequestId,
+        count: barColorState.length,
+        barColors: others,
+        avoid: current ? [current] : []
+      }}, '*');
+    }
+
+    // Tells the user where a pick lands: straight onto the selected chart, or
+    // into the form until "Insert chart". A failed recolor shows its reason.
+    var recolorError = '';
+    function updateBarColorsHint() {
+      var hint = document.getElementById('barColorsHint');
+      if (recolorError) {
+        hint.className = 'color-hint error';
+        hint.textContent = recolorError;
+      } else {
+        hint.className = 'color-hint';
+        hint.textContent = storedChartData
+          ? 'Colors apply to the selected chart right away'
+          : 'Colors apply when you insert the chart';
+      }
+    }
+
+    // Clicks inside the picker are marked here (the list itself is never
+    // re-rendered, so it sees the click even after a row was rebuilt); any
+    // other click, or Esc, closes an open palette.
+    var clickInsidePicker = false;
+    document.getElementById('barColorsList').addEventListener('click', function () {
+      clickInsidePicker = true;
+    });
+    function closeColorPalette() {
+      if (openColorRow === -1) return;
+      openColorRow = -1;
+      renderBarColors();
+    }
+    document.addEventListener('click', function () {
+      if (clickInsidePicker) { clickInsidePicker = false; return; }
+      closeColorPalette();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e && e.key === 'Escape') closeColorPalette();
+    });
+
+    // Text next to a row's swatch: where the color comes from, then its hex.
+    function colorValueText(hex) {
+      if (!hex) return 'Auto';
+      if (!paletteHex.length) return hex;
+      return (isPaletteColor(hex) ? 'Palette · ' : 'Custom · ') + hex;
+    }
+
+    // Grid order: by hue around the color wheel starting from red, lighter
+    // before darker within a similar hue; near-grays go last, light → dark.
+    // Display only — generation keeps the palette's own order.
+    function hexToHsl(hex) {
+      var r = parseInt(hex.slice(1, 3), 16) / 255;
+      var g = parseInt(hex.slice(3, 5), 16) / 255;
+      var b = parseInt(hex.slice(5, 7), 16) / 255;
+      var max = Math.max(r, g, b), min = Math.min(r, g, b);
+      var l = (max + min) / 2;
+      var d = max - min;
+      var h = 0, sat = 0;
+      if (d > 0) {
+        sat = d / (1 - Math.abs(2 * l - 1));
+        if (max === r) h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      return { h: h, s: sat, l: l };
+    }
+
+    var GRAY_SATURATION = 0.2;
+    function sortPaletteByHue(hexes) {
+      return hexes.slice().sort(function (a, b) {
+        var ha = hexToHsl(a), hb = hexToHsl(b);
+        var grayA = ha.s < GRAY_SATURATION, grayB = hb.s < GRAY_SATURATION;
+        if (grayA !== grayB) return grayA ? 1 : -1;
+        if (grayA) return hb.l - ha.l;
+        // Start the wheel just below red so pinks/reds (≈345°+) open the grid.
+        var keyA = (ha.h + 15) % 360, keyB = (hb.h + 15) % 360;
+        if (Math.abs(keyA - keyB) > 0.5) return keyA - keyB;
+        return hb.l - ha.l;
+      });
+    }
+
+    function isPaletteColor(hex) {
+      return paletteHex.indexOf(hex) !== -1;
+    }
+
+    // Gives the listed Auto rows a concrete color: the one the series has on the
+    // chart right now when it is known and not taken by another row, otherwise
+    // a suggestion from code.js picked exactly like generation would pick it.
+    function fillUnpinnedColors(indices) {
+      syncBarColorsToCount();
+      var missing = [];
+      indices.forEach(function (i) {
+        if (i < 0 || i >= barColorState.length || barColorState[i] !== null) return;
+        var current = normalizeHex(autoColorPreview[i]);
+        if (current && barColorState.indexOf(current) === -1) barColorState[i] = current;
+        else missing.push(i);
+      });
+      if (missing.length) {
+        suggestRequestId++;
+        pendingSuggestSlots = missing;
+        pendingSuggestLive = false;
+        parent.postMessage({ pluginMessage: {
+          type: 'suggest-colors',
+          requestId: suggestRequestId,
+          count: barColorState.length,
+          barColors: barColorState.slice()
+        }}, '*');
+      }
+      renderBarColors();
+    }
+
+    function applySuggestedColors(msg) {
+      if (msg.requestId !== suggestRequestId) return; // a newer request superseded it
+      var colors = msg.colors || [];
+      var live = pendingSuggestLive;
+      var filled = [];
+      pendingSuggestSlots.forEach(function (i) {
+        // A filled-in Auto row only takes the suggestion if still empty; the
+        // "Auto" button asked for this exact row, so it always takes it.
+        if (i < barColorState.length && (live || barColorState[i] === null)) {
+          barColorState[i] = normalizeHex(colors[i]);
+          filled.push(i);
+        }
+      });
+      pendingSuggestSlots = [];
+      pendingSuggestLive = false;
+      renderBarColors();
+      if (live) filled.forEach(recolorSelectedChart);
+    }
+
+    function toggleColorRow(index) {
+      openColorRow = (openColorRow === index) ? -1 : index;
+      renderBarColors();
+    }
+
+    function seriesDisplayName(index) {
+      var name = 'Series ' + (index + 1);
+      if (document.getElementById('showLegendCheck').checked) {
+        var labels = document.getElementById('legendInput').value.split(',')
+          .map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+        if (labels[index] && labels[index] !== name) name += ' · ' + labels[index];
+      }
+      return name;
+    }
+
+    // What generate() sends: pins only while "Custom bar colors" is on.
+    function currentBarColors() {
+      syncBarColorsToCount();
+      if (!document.getElementById('customColorsCheck').checked) {
+        return barColorState.map(function () { return null; });
+      }
+      return barColorState.slice();
+    }
+
+    function updateBarColorsVisibility() {
+      var on = document.getElementById('customColorsCheck').checked;
+      document.getElementById('barColorsField').style.display = on ? 'block' : 'none';
+    }
+
+    function buildPalettePanel(index) {
+      var panel = document.createElement('div');
+      panel.className = 'palette-panel';
+
+      var auto = document.createElement('button');
+      auto.type = 'button';
+      auto.className = 'palette-auto';
+      auto.textContent = 'Auto — generate a new color';
+      auto.addEventListener('click', function () {
+        openColorRow = -1;
+        renderBarColors();
+        generateBarColor(index);
+      });
+      panel.appendChild(auto);
+
+      // A pinned color outside the palette (e.g. from an older palette) has no
+      // swatch in the grid — show it on its own so the current choice stays visible.
+      var current = barColorState[index];
+      if (current && paletteHex.length && !isPaletteColor(current)) {
+        var custom = document.createElement('div');
+        custom.className = 'palette-custom';
+        var csw = document.createElement('span');
+        csw.className = 'color-swatch';
+        csw.style.background = current;
+        custom.appendChild(csw);
+        var ctext = document.createElement('span');
+        ctext.textContent = current + ' · not in the palette';
+        custom.appendChild(ctext);
+        panel.appendChild(custom);
+      }
+
+      if (!paletteHex.length) {
+        var empty = document.createElement('div');
+        empty.className = 'palette-empty';
+        empty.textContent = 'Palette is loading…';
+        panel.appendChild(empty);
+        return panel;
+      }
+
+      var grid = document.createElement('div');
+      grid.className = 'palette-grid';
+      paletteDisplay.forEach(function (hex) {
+        var sw = document.createElement('button');
+        sw.type = 'button';
+        var cls = 'palette-color';
+        if (barColorState[index] === hex) cls += ' selected';
+        else if (barColorState.indexOf(hex) !== -1) cls += ' used';
+        sw.className = cls;
+        sw.style.background = hex;
+        sw.title = hex;
+        sw.addEventListener('click', function () {
+          openColorRow = -1; // a pick closes the palette
+          setBarColor(index, hex);
+        });
+        grid.appendChild(sw);
+      });
+      panel.appendChild(grid);
+      return panel;
+    }
+
+    function renderBarColors() {
+      syncBarColorsToCount();
+      var list = document.getElementById('barColorsList');
+      list.innerHTML = '';
+      updateBarColorsHint();
+      if (!document.getElementById('customColorsCheck').checked) return;
+
+      barColorState.forEach(function (pinned, i) {
+        var shown = pinned || autoColorPreview[i] || null;
+
+        var row = document.createElement('div');
+        row.className = 'color-row' + (openColorRow === i ? ' open' : '');
+        row.addEventListener('click', function () { toggleColorRow(i); });
+
+        var sw = document.createElement('span');
+        sw.className = 'color-swatch' + (shown ? '' : ' auto-empty');
+        if (shown) sw.style.background = shown;
+        row.appendChild(sw);
+
+        var name = document.createElement('span');
+        name.className = 'color-name';
+        name.textContent = seriesDisplayName(i);
+        row.appendChild(name);
+
+        var value = document.createElement('span');
+        value.className = 'color-value';
+        value.textContent = colorValueText(pinned);
+        if (pinned && paletteHex.length) {
+          value.title = isPaletteColor(pinned) ? 'Color from the palette' : 'Not in the palette';
+        }
+        row.appendChild(value);
+
+        if (pinned) {
+          var reset = document.createElement('button');
+          reset.type = 'button';
+          reset.className = 'color-reset';
+          reset.title = 'Unpin: the series gets a new generated color on regenerate';
+          reset.textContent = '×';
+          reset.addEventListener('click', function (e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            setBarColor(i, null);
+          });
+          row.appendChild(reset);
+        }
+
+        list.appendChild(row);
+        if (openColorRow === i) list.appendChild(buildPalettePanel(i));
+      });
+    }
+
+    // Restores the picker from a chart's saved params (Get values / paste).
+    function populateBarColors(d) {
+      var n = (d.barMode === 'normal') ? 1 : (d.barsCount || 1);
+      var saved = d.barColors || [];
+      barColorState = [];
+      autoColorPreview = [];
+      for (var i = 0; i < n; i++) {
+        barColorState.push(normalizeHex(saved[i]));
+        autoColorPreview.push(d.colors && d.colors[i] ? rgbToHex(d.colors[i]) : null);
+      }
+      openColorRow = -1;
+      document.getElementById('customColorsCheck').checked = (d.customColors !== undefined)
+        ? !!d.customColors
+        : barColorState.some(function (c) { return c !== null; });
+      updateBarColorsVisibility();
+      renderBarColors();
+    }
+
+    document.getElementById('customColorsCheck').addEventListener('change', function () {
+      updateBarColorsVisibility();
+      var on = document.getElementById('customColorsCheck').checked;
+      if (on) {
+        // Switching the picker on shows real colors at once instead of "Auto".
+        // With a chart selected, the rows become exactly that chart's colors.
+        syncBarColorsToCount();
+        if (storedChartData) {
+          barColorState = barColorState.map(function (_, i) { return normalizeHex(autoColorPreview[i]); });
+        }
+        fillUnpinnedColors(barColorState.map(function (_, i) { return i; }));
+      } else {
+        renderBarColors();
+      }
+      // Remember the picker state on the selected chart, so "Get values from
+      // chart" and paste bring it back. Its colors do not change.
+      if (storedChartData) {
+        recolorError = '';
+        parent.postMessage({ pluginMessage: {
+          type: 'save-bar-colors',
+          customColors: on,
+          barColors: on ? barColorState.slice() : []
+        }}, '*');
+      }
+      resizeUI();
+    });
+    document.getElementById('legendInput').addEventListener('input', renderBarColors);
+
+    // updateDenseVisibility() runs once at load, before this section has set up
+    // its state — the mode-switch hook waits for this flag.
+    var barColorsReady = true;
+
+    // Series count changes (the field, or a mode switch to/from Normal): resize
+    // the picker; new series added while it is on get a concrete color.
+    function onSeriesCountChanged() {
+      var before = barColorState.length;
+      syncBarColorsToCount();
+      if (document.getElementById('customColorsCheck').checked && barColorState.length > before) {
+        var added = [];
+        for (var i = before; i < barColorState.length; i++) added.push(i);
+        fillUnpinnedColors(added);
+      }
+      renderBarColors();
+    }
+
 
 
     // ═══════════════════════════════════════════════
@@ -679,6 +1233,7 @@
       autoResizeLegendInput();
 
       updateDenseVisibility();
+      populateBarColors(d);
 
       replaceMode = true;
       setInsertEnabled(true);
@@ -743,6 +1298,8 @@
         showLegend: showLegend,
         legendLabels: legendLabels,
         legendAlign: getLegendAlign(),
+        barColors: currentBarColors(),
+        customColors: document.getElementById('customColorsCheck').checked,
         topEvent: topEvent,
         bottomEvent: bottomEvent,
         replace: replaceMode
@@ -758,7 +1315,31 @@
 
     window.onmessage = function(event) {
       var msg = event.data.pluginMessage;
+      if (msg && msg.type === 'palette') {
+        paletteHex = (msg.colors || []).map(normalizeHex).filter(function (h) { return h !== null; });
+        paletteDisplay = sortPaletteByHue(paletteHex);
+        renderBarColors();
+        return;
+      }
+      if (msg && msg.type === 'recolor-failed') {
+        recolorError = msg.message || 'Could not apply the color';
+        updateBarColorsHint();
+        return;
+      }
+      if (msg && msg.type === 'suggested-colors') {
+        applySuggestedColors(msg);
+        return;
+      }
       if (!msg || msg.type !== 'selection') return;
+      recolorError = '';
+
+      if (msg.reason === 'recolor' && msg.hasChart && msg.chartData) {
+        // Our own live recolor: keep the form and its buttons exactly as they are.
+        storedChartData = msg.chartData;
+        autoColorPreview = (msg.chartData.colors || []).map(rgbToHex);
+        renderBarColors();
+        return;
+      }
 
       var bar = document.getElementById('targetBar');
       var name = document.getElementById('targetName');
@@ -784,6 +1365,9 @@
           populateFromChartData(msg.chartData);
           pendingPasteData = null;
         } else {
+          // Auto rows preview the colors the selected chart has right now.
+          autoColorPreview = (msg.chartData.colors || []).map(rgbToHex);
+          renderBarColors();
           setRegenEnabled(true);
           setInsertEnabled(false);
         }
@@ -795,6 +1379,7 @@
         setInsertEnabled(true);
       }
 
+      updateBarColorsHint();
       updateClipboardUI();
       resizeUI();
     };
@@ -805,6 +1390,7 @@
     }
 
     resizeUI();
+    parent.postMessage({ pluginMessage: { type: 'get-palette' } }, '*');
     new MutationObserver(resizeUI).observe(document.body, { childList: true, subtree: true, attributes: true });
   </script>
 </body>

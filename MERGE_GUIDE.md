@@ -158,7 +158,7 @@ The unified plugin detects ALL chart types when a frame is selected:
 3. `readChartParams(chartFrame)` — reads pluginData, adds `chartType` field, delegates to type-specific fallback parser
 4. UI receives `chartData` with `chartType` field — auto-switches to correct tab
 
-This means the unified plugin can detect and regenerate charts created by ANY individual plugin, and vice versa (since they all use the same `setPluginData("chartParams", ...)` pattern).
+In real Figma `pluginData` is private per plugin id (`manifest.json` → `id`), so the unified plugin cannot read the `chartParams` written by an individual plugin, and vice versa. Cross-plugin detection and "Get values from chart" therefore rely on the **fallback layer parser**, which must recover everything the UI needs — axes, series count, styles/modes, legend (on/off, labels, alignment via `absoluteBoundingBox`) and series colors. The test mock shares `pluginData` between plugins; tests for this path wipe `chartParams` first.
 
 ### Auto-replacement of existing charts
 
@@ -182,7 +182,17 @@ Do NOT attempt to retro-migrate old `pluginData` by reading layer structure unle
 
 The unified `findChartFrame` does **BFS through all descendants** (FRAME / COMPONENT / INSTANCE / GROUP) with a safety cap (~200 nodes), not just direct children. This handles cases where the chart container is wrapped in an autolayout sub-frame, placed inside a group, or otherwise nested deeper than one level. The cap prevents runaway scans on very large frames; 200 is well above what any real chart layout needs.
 
-When porting changes from individual plugins (which only check direct children), do NOT downgrade the unified plugin's recursive lookup — keep the BFS version.
+Since the series color picker, every standalone plugin (Line, Area, Bar, Pie) walks the tree too — do NOT downgrade the unified plugin's recursive lookup when porting. The standalone versions also treat a renamed frame with `chartParams` pluginData as a chart and resolve a selected layer inside a chart to that chart; a nested chart is regenerated in its own parent, at its layer index and size. The unified plugin has the same behaviour (BFS cap 300, including SECTION).
+
+### Series color picker (shared block)
+
+Every chart type has a "Custom line / area / bar / segment colors" picker. In the unified plugin it is **one** implementation, not four copies:
+- **code.js, shared:** palette hex helpers, `resolveSeriesColors(count, pins, avoid, ring)` (randomized maximin; no pins → exactly `selectDistinctColors`; `ring` → Pie's adjacency arrangement), legend/colour recovery from layers, `applyColorsToSelectedChart`. Per-type parts are only the node mapping (line stroke; area fill keeping opacity; bar `index % seriesCount`; pie `drawnSegmentIndices`).
+- **chartParams fields** (same names as the individual plugins, backward compatible): `lineColors` / `areaColors` / `barColors` / `segmentColors` (per-series `#RRGGBB` or `null` = Auto), `customColors` (picker on/off; inferred from pins when absent), `chartType`.
+- **Messages UI → plugin:** `get-palette`; `suggest-colors` (`count`, pins, `avoid`, `chartType`); `recolor` (`index`, `color`); `save-series-colors` (also accepts `save-line-colors` / `save-area-colors` / `save-bar-colors` / `save-segment-colors`). Plugin → UI: `palette`, `suggested-colors` (`requestId` echoed), `recolor-failed`, and `selection` with `reason: "recolor"` — the UI only refreshes stored data on it, without `switchTab()`, so tab, `replaceMode` and buttons are kept.
+- **ui.html:** IDs `[type]-customColorsCheck`, `[type]-colorsField`, `[type]-colorsList`, `[type]-colorsHint`; live recolor only when the selected chart type matches the current tab; rows past the chart's series apply on Insert only.
+
+Charts generated before the picker have no pins or picker state stored — regenerate them to pick it up.
 
 ### "Get values from chart" button visibility
 

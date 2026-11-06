@@ -166,15 +166,12 @@ for (const key of VARIANTS.bar) {
     assert.equal(vertical.recovered.orientation, 'vertical');
   });
 
-  // KNOWN BUG (both plugins): on a horizontal bar chart the numeric ticks live
-  // in the "X Labels" group and "Y Labels" holds the category names. The parser
-  // only reads numeric ticks from "Y Labels", so yValues stays empty and
-  // readAxisChartParamsFromLayers bails out with `return null`. Effect: a
-  // horizontal bar chart whose pluginData is gone is not recognised as a chart
-  // at all — Regenerate / Copy / "get values" never light up for it.
+  // On a horizontal bar chart the numeric ticks live in the "X Labels" group
+  // and "Y Labels" holds the category names. Both parsers detect orientation
+  // from the bars first and read the axes accordingly (fixed with the color
+  // picker), so such a chart is still recognised without pluginData.
   test(
     'recovers horizontal orientation' + V,
-    { todo: 'BUG: horizontal bar charts are unrecognisable without pluginData' },
     async () => {
       const horizontal = await recover(key, 'bar', { orientation: 'horizontal' });
       assert.equal(horizontal.hasChart, true, 'the chart must still be detected');

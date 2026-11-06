@@ -5,6 +5,10 @@
 //
 // Вставка идёт по явному маркеру, а не «после первого заголовка», чтобы правка
 // интро в начале файла не сдвигала точку вставки.
+//
+// Если секция этой версии уже есть (версию проставили заранее, в ветке, вместе
+// с черновиком заметок), она заменяется, а не дублируется: при публикации
+// остаются только свежие заметки воркфлоу.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +22,15 @@ export function prepend(changelog, { version, date, notes }) {
     throw new Error(`В CHANGELOG.md нет маркера ${MARKER} — непонятно, куда вставлять релиз`);
   }
   const section = `## ${version} — ${date}\n\n${notes.trim()}`;
-  return changelog.replace(MARKER, `${MARKER}\n\n${section}`);
+  const withoutSameVersion = removeSection(changelog, version);
+  return withoutSameVersion.replace(MARKER, `${MARKER}\n\n${section}`);
+}
+
+// Убирает секцию `## <version> — …` целиком, до следующего `## ` или конца файла.
+export function removeSection(changelog, version) {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`\\n*^## ${escaped} — [^\\n]*\\n[\\s\\S]*?(?=^## |(?![\\s\\S]))`, 'm');
+  return changelog.replace(re, '\n\n');
 }
 
 function main([version, notesFile]) {

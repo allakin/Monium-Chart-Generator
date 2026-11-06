@@ -347,6 +347,12 @@ class MockNode {
   }
 
   // ── Plugin data ─────────────────────────────────────────────────────────
+  /** Page-space bounds, as Figma's absoluteBoundingBox (rotation-aware for ±90° LINEs). */
+  get absoluteBoundingBox() {
+    const b = absBox(this);
+    return { x: b.x, y: b.y, width: b.w, height: b.h };
+  }
+
   getPluginData(key) {
     return this._pluginData[key] || '';
   }
@@ -399,7 +405,15 @@ class MockDocument {
  * Returns { figma, doc, log } where `log` records side effects the plugins
  * produce for the user: notifications, UI messages, viewport jumps, resizes.
  */
-function createFigmaMock() {
+/**
+ * @param {object} [options]
+ * @param {string} [options.documentAccess] manifest's documentAccess. With
+ *   "dynamic-page" the synchronous getNodeById throws, as in Figma — plugins
+ *   must use getNodeByIdAsync.
+ */
+function createFigmaMock(options) {
+  const mockOpts = options || {};
+  const dynamicPage = mockOpts.documentAccess === 'dynamic-page';
   const doc = new MockDocument();
   const page = new MockNode('PAGE', doc);
   page.name = 'Page 1';
@@ -510,11 +524,17 @@ function createFigmaMock() {
     },
 
     getNodeById(id) {
+      if (dynamicPage) {
+        throw new Error(
+          'in getNodeById: Cannot call with documentAccess: dynamic-page. Use figma.getNodeByIdAsync instead.',
+        );
+      }
       const n = doc.nodes.get(id);
       return n && !n.removed ? n : null;
     },
     getNodeByIdAsync(id) {
-      return Promise.resolve(figma.getNodeById(id));
+      const n = doc.nodes.get(id);
+      return Promise.resolve(n && !n.removed ? n : null);
     },
 
     loadFontAsync(fontName) {

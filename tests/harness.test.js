@@ -9,10 +9,11 @@
  */
 
 const test = require('node:test');
+const fs = require('fs');
 const assert = require('node:assert/strict');
 
 const { createFigmaMock, measureText, absBox } = require('./helpers/figma-mock');
-const { loadPlugin, ALL_KEYS, PLUGIN_DIRS } = require('./helpers/load-plugin');
+const { loadPlugin, ALL_KEYS, PLUGIN_DIRS, pluginPath } = require('./helpers/load-plugin');
 const { payload } = require('./helpers/fixtures');
 
 test('mock: resize rejects sizes the real API rejects', () => {
@@ -177,3 +178,22 @@ test('harness: notify message is forwarded to Figma', async () => {
   await h.send({ type: 'notify', message: 'hello' });
   assert.equal(h.log.notifications[0].message, 'hello');
 });
+
+test('mock: documentAccess "dynamic-page" forbids the synchronous getNodeById', async () => {
+  const { figma } = createFigmaMock({ documentAccess: 'dynamic-page' });
+  const r = figma.createRectangle();
+  assert.throws(() => figma.getNodeById(r.id), /getNodeByIdAsync/);
+  assert.equal(await figma.getNodeByIdAsync(r.id), r, 'the async lookup works');
+});
+
+for (const key of ALL_KEYS) {
+  test('plugin honours its manifest documentAccess: ' + PLUGIN_DIRS[key], () => {
+    // Every manifest uses "dynamic-page", where Figma throws on the synchronous
+    // lookup — a call to it would fail only at runtime, so forbid it statically.
+    const manifest = JSON.parse(fs.readFileSync(pluginPath(key, 'manifest.json'), 'utf8'));
+    const source = fs.readFileSync(pluginPath(key, 'code.js'), 'utf8');
+    if (manifest.documentAccess === 'dynamic-page') {
+      assert.doesNotMatch(source, /\.getNodeById\(/, 'use figma.getNodeByIdAsync (or keep a node reference)');
+    }
+  });
+}

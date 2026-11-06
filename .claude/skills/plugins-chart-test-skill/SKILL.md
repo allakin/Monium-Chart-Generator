@@ -20,7 +20,7 @@ description: Прогнать автотесты плагинов Monium Chart G
 - **header:** `Что тестировать`
 - **question:** `Какие плагины прогнать?`
 - **options:**
-  1. `Все сразу (рекомендуется)` — 559 тестов, ~1.2 с, полная картина
+  1. `Все сразу (рекомендуется)` — 1013 тестов, ~2 с, полная картина
   2. `Отдельные типы чартов` — уточню, какие именно
   3. `Только изменённые` — по `git status` соберу затронутые плагины
   4. `Только матрица размеров` — быстрая проверка на «график не отображается»
@@ -67,6 +67,14 @@ node --test --test-name-pattern "pie" \
   tests/pie.test.js tests/small-frames.test.js tests/copy-paste.test.js \
   tests/copy-loader.test.js tests/placement.test.js tests/layer-parsing.test.js
 ```
+
+Для каждого типа добавить в список его сьюту пикера цветов серий:
+`tests/line-colors.test.js`, `tests/area-colors.test.js`, `tests/bar-colors.test.js`,
+`tests/pie-colors.test.js` — плагинная часть идёт против отдельного плагина и
+сводного генератора, UI-часть только против отдельного. UI пикера сводного
+генератора — `tests/all-colors-ui.test.js` (добавлять при правках в
+`Monium all charts generator/ui.html`). Сьюты пикера запускают и
+`npm run test:<тип>`.
 
 Когда менялся общий код или хелперы — обязательно добавить:
 

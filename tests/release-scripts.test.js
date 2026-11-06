@@ -118,6 +118,26 @@ test('changelog-prepend: секция встаёт после маркера, и
   assert.ok(result.includes(MARKER), 'маркер нужен для следующего релиза');
 });
 
+test('changelog-prepend: секция уже проставленной версии заменяется, а не дублируется', async () => {
+  // Версию можно проставить заранее в ветке (с черновиком заметок) — публикация
+  // потом перезапишет секцию свежими заметками, а не добавит вторую такую же.
+  const { prepend } = await load('changelog-prepend.mjs');
+  const base = '# Changelog\n\n<!-- new-release-here -->\n\n## v2.4 — 2026-09-22\n\nold\n\n## v2.3 — 2026-09-20\n\nolder\n';
+  const draft = prepend(base, { version: 'v2.5', date: '2026-11-06', notes: 'черновик' });
+  const final = prepend(draft, { version: 'v2.5', date: '2026-11-10', notes: 'итог' });
+  assert.strictEqual(final, prepend(base, { version: 'v2.5', date: '2026-11-10', notes: 'итог' }));
+  assert.strictEqual((final.match(/^## v2\.5 /gm) || []).length, 1, 'одна секция v2.5');
+  assert.ok(!final.includes('черновик'), 'черновик заменён');
+
+  const patch = prepend(base, { version: 'v2.5.1', date: '2026-11-11', notes: 'патч' });
+  const again = prepend(patch, { version: 'v2.5', date: '2026-11-12', notes: 'x' });
+  assert.ok(again.includes('## v2.5.1 — 2026-11-11\n\nпатч'), 'v2.5 не задевает v2.5.1');
+
+  const last = '# C\n\n<!-- new-release-here -->\n\n## v2.5 — 2026-11-06\n\nединственная\n';
+  const replaced = prepend(last, { version: 'v2.5', date: '2026-11-10', notes: 'новая' });
+  assert.strictEqual(replaced, '# C\n\n<!-- new-release-here -->\n\n## v2.5 — 2026-11-10\n\nновая\n\n');
+});
+
 test('changelog-prepend: без маркера падает, а не портит файл', async () => {
   const { prepend } = await load('changelog-prepend.mjs');
 
