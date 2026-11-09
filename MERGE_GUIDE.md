@@ -33,7 +33,8 @@ Monium all charts generator/
 6. SHARED: Chart detection (findChartFrame — checks ALL chart names)
 7. SHARED: detectChartType(chartFrame) — returns "line"|"bar"|"area"|"pie"
 8. SHARED: readChartParams — delegates to type-specific parsers
-9. SHARED: Axis label parsers (readYLabelsFromGroup, readXLabelsFromGroup, readAxisFromFlatChildren)
+9. SHARED: Axis label parsers (parseAxisLabel, sharedAxisUnit, parseXLabelTexts, withAxisUnit,
+   parseYLabelTexts, resolveYLabels, readYLabelsFromGroup, readXLabelsFromGroup, readAxisFromFlatChildren)
 10. SHARED: detectEventsFromRects, detectCurveStyle
 11. SHARED: readChartParamsFromLayers — routes to readAxisChartParamsFromLayers or readPieParamsFromLayers
 12. SHARED: sendSelection()
@@ -88,7 +89,7 @@ Before merging, open `CHART_STYLE_GUIDE.md` and verify:
 
 #### Step 1: Identify what changed
 Categorize changes into:
-- **A) Shared code** — PALETTE, perceptual distance + selectDistinctColors, selection tracking, event bars, grid/labels, curve builders
+- **A) Shared code** — PALETTE, perceptual distance + selectDistinctColors, selection tracking, event bars, grid/labels, curve builders, axis label parsing and units (see [Axis values and units](#axis-values-and-units-shared-block))
 - **B) Chart-specific code.js** — drawing functions, generate function, readParamsFromLayers
 - **C) Chart-specific ui.html** — fields, radio groups, visibility logic, regenerate/generate functions
 
@@ -131,9 +132,9 @@ If a new parameter was added to a chart type:
 
 ### Element IDs in ui.html
 All IDs are prefixed with the chart type to avoid conflicts:
-- Line: `line-yInput`, `line-xInput`, `line-countInput`, `line-styleGroup`, etc.
-- Area: `area-yInput`, `area-xInput`, `area-countInput`, `area-styleGroup`, `area-modeGroup`, etc.
-- Bar: `bar-yInput`, `bar-xInput`, `bar-countInput`, `bar-orientationGroup`, `bar-modeGroup`, etc.
+- Line: `line-yInput`, `line-yUnitInput`, `line-xInput`, `line-xUnitInput`, `line-countInput`, `line-styleGroup`, etc.
+- Area: `area-yInput`, `area-yUnitInput`, `area-xInput`, `area-xUnitInput`, `area-countInput`, `area-styleGroup`, `area-modeGroup`, etc.
+- Bar: `bar-yInput`, `bar-yUnitInput`, `bar-xInput`, `bar-xUnitInput`, `bar-countInput`, `bar-orientationGroup`, `bar-modeGroup`, etc.
 - Pie: `pie-valuesInput`, `pie-segmentsInput`, `pie-styleGroup`, etc.
 
 ### Radio button names
@@ -193,6 +194,16 @@ Every chart type has a "Custom line / area / bar / segment colors" picker. In th
 - **ui.html:** IDs `[type]-customColorsCheck`, `[type]-colorsField`, `[type]-colorsList`, `[type]-colorsHint`; live recolor only when the selected chart type matches the current tab; rows past the chart's series apply on Insert only.
 
 Charts generated before the picker have no pins or picker state stored — regenerate them to pick it up.
+
+### Axis values and units (shared block)
+
+Axis text parsing exists as **copies** in every plugin with axes (Line, Area, Bar, unified) — `code.js` and `ui.html` each — and the copies must stay byte-for-byte identical in behaviour; `helpers-unit.test.js` checks the `code.js` copies against each other (drift matrix). When porting a change, update **all eight** places, not just the plugin you started in.
+- **code.js, shared:** `parseAxisLabel(str)` → `{ value, unit, scale }` — digit-group spaces (`2 000 000`, also NBSP / narrow NBSP / thin space), thousands shorthand `k` / `kk` / `kkk` (any case, Cyrillic `к`; not when a letter follows: `5kB`), clock times, prefixes. `unit` is the whole text after the number, `scale` its leading shorthand. `sharedAxisUnit(chars)` — suffix every label shares: verbatim tail first (`0k, 100k` → `k`), then the tail after the shorthand (`100k/s, 1kk/s` → `/s`). `parseYLabelTexts` and `parseXLabelTexts` both use it; `withAxisUnit(labels, unit)` builds the drawn texts.
+- **ui.html:** `parseAxisNumber` mirrors `parseAxisLabel` (value only); `parseYAxisInput` keeps the typed labels when they aren't plain numbers.
+- **chartParams fields:** `yUnit`, and since v2.5.1 `xUnit` (`""` default; old charts without it behave as before). `xLabels` are stored **without** the unit.
+- **Where `xUnit` is applied (unified plugin):** each generator reads `msg.xUnit`, draws categories via `withAxisUnit(xLabels, xUnit)` (`drawXLabelsStandard`, `drawCategoryLabelsBottom` / `drawCategoryLabelsLeft`), measures horizontal-bar padding with it (`measureMaxTextWidth(withAxisUnit(...))`), and stores it in `chartParams`. Draw functions themselves stay unit-agnostic. On read-back `readAxisChartParamsFromLayers` splits the unit off **once**, after all axis paths (groups, bar orientation re-read, flat fallback): `parseXLabelTexts(result.xLabels)`. Standalone plugins do the same right before building `recovered`.
+- **ui.html fields:** `[type]-yUnitInput`, `[type]-xUnitInput` (standalone: `yUnitInput`, `xUnitInput`), both trimmed on generate and filled by `regenerate()` from `d.yUnit` / `d.xUnit`. Pie has no axes and no unit fields.
+- **Tests:** `large-numbers.test.js` (positions, overlap, read-back) and `x-unit.test.js` (X unit end to end, UI included) run against standalone and unified plugins.
 
 ### "Get values from chart" button visibility
 

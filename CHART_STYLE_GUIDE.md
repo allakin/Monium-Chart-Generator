@@ -269,6 +269,15 @@ focus border-color: #4D7CFE;
 #### "Y axis — values (comma-separated)" field — DO NOT round
 This field is the source of truth for the Y axis. Values are parsed with `parseFloat` and MUST be drawn on the canvas with their original precision — no `Math.round`, no `parseInt`, no `Math.floor/ceil`. If the user types `0, 0.4, 0.8, 1.2, 1.6`, the rendered Y axis must read `0, 0.4, 0.8, 1.2, 1.6` (not `0, 0, 1, 1, 2`). The same rule applies to the Pie plugin's "Values (comma-separated)" field and to its center-total label. Always render through `formatYValue(v)` (see [Y Axis Value Formatting](#y-axis-value-formatting--formatyvaluev) in Figma Plugin Code Patterns).
 
+Large values may be typed the way people write them, and must still be positioned by their full value (the label itself is drawn as typed):
+- digit-group spaces — `100 000`, `2 000 000` (regular, NBSP, narrow NBSP, thin space; a group after the space must have exactly 3 digits)
+- thousands shorthand — `100k` = 100 000, `1.5kk` = 1 500 000, `2kkk` = 2·10⁹, case-insensitive, Cyrillic `к` too. Not a multiplier when a letter follows: `5kB`, `10kbps`, `3kg` are units
+
+The shorthand combines with the **"Y axis — unit"** field: values `0, 100k, 1kk` + unit `/s` draw `0/s, 100k/s, 1kk/s`. On read-back ("Get values from chart") a suffix shared by every label verbatim goes to the unit field first (`0k, 100k, 500k` → values `0, 100, 500`, unit `k`); otherwise the unit is what follows the shorthand, and the shorthand stays in the values. Both unit fields are trimmed by the UI, so a unit cannot start with a space. Parsing lives in `parseAxisLabel` / `sharedAxisUnit` / `parseYLabelTexts` (code.js) and `parseAxisNumber` (ui.html) — all copies must stay identical.
+
+#### "X axis — unit" field
+Line, Area and Bar (and the matching tabs of the combined generator) have an **"X axis — unit"** field right under "X axis — labels". It is a suffix appended to every category label at draw time (`1, 2, 3` + `h` → `1h, 2h, 3h`); `chartParams` keeps `xLabels` without it plus a separate `xUnit` (`""` when empty). The field follows the data, not the screen: on a **horizontal** bar chart the categories — and so the X unit — sit on the left axis, and the left padding is measured with the unit included. On read-back from layers a suffix shared by every category is split off into `xUnit` by the same `sharedAxisUnit` rules as the Y axis (`100k/s, 1kk/s` → labels `100k, 1kk`, unit `/s`); text categories (`Jan`, `gpt-5-…`) never yield a unit. Pie has no axes and no unit fields.
+
 ### Radio Buttons (e.g. Line Style)
 ```css
 background: #EEEEF0; color: #808080; border-radius: 6px;
@@ -317,7 +326,7 @@ active: background: #4D7CFE; color: #fff;
 - `16px` between all sections (fields, groups, buttons)
 
 ### Footer
-- `"Monium Design System v2.5"` — plain text, no link
+- `"Monium Design System v2.5.1"` — plain text, no link
 - `font-size: 10px; color: #AAAAAA; text-align: center`
 
 ### Header Subtitle — brand + Documentation link
@@ -392,7 +401,8 @@ After every chart generation, store all parameters as JSON on the chart containe
 container.setPluginData("chartParams", JSON.stringify({
   yValues: yValues,
   yUnit: yUnit,
-  xLabels: xLabels,
+  xLabels: xLabels,         // categories without the unit
+  xUnit: xUnit,             // "X axis — unit", "" when empty
   linesCount: linesCount,   // or areasCount, barsCount
   lineStyle: lineStyle,     // chart-type-specific style option
   topEvent: topEvent,

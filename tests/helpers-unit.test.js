@@ -72,6 +72,29 @@ test('parseAxisLabel reads plain numbers, units, prefixes and clock times', () =
     ['1:02:30', 1 + 2 / 60 + 30 / 3600, ''],
     ['-1:30', -1.5, ''],
     ['2:15 pm', 2.25, ' pm'],
+    ['100 000', 100000, ''],
+    ['2 000 000', 2000000, ''],
+    ['1 500 000.5', 1500000.5, ''],
+    ['1\u00A0500', 1500, ''],
+    ['2\u202F000\u202F000', 2000000, ''],
+    ['1 000 000 req/s', 1000000, ' req/s'],
+    ['$1 500', 1500, ''],
+    ['12 34', 12, ' 34'],
+    ['100k', 100000, 'k'],
+    ['1kk', 1000000, 'kk'],
+    ['1.5kk', 1500000, 'kk'],
+    ['1,5kk', 1500000, 'kk'],
+    ['2kkk', 2000000000, 'kkk'],
+    ['1.1k', 1100, 'k'],
+    ['100K', 100000, 'K'],
+    ['100\u043A', 100000, '\u043A'],
+    ['1\u043A\u043A', 1000000, '\u043A\u043A'],
+    ['100k RPS', 100000, 'k RPS'],
+    ['100 k', 100000, ' k'],
+    ['5kB', 5, 'kB'],
+    ['10kbps', 10, 'kbps'],
+    ['3kg', 3, 'kg'],
+    ['2kkkk', 2, 'kkkk'],
   ];
   for (const [input, value, unit] of cases) {
     const parsed = REF.parseAxisLabel(input);
@@ -106,6 +129,58 @@ test('parseYLabelTexts detects a unit only when every label carries it', () => {
 
   const mixed = REF.parseYLabelTexts(['0ms', '150', '300ms']);
   assert.equal(mixed.yUnit, '', 'a unit missing from one label is not a shared unit');
+});
+
+test('parseYLabelTexts scales k / kk shorthands and keeps them in the label', () => {
+  const mixed = REF.parseYLabelTexts(['0', '100k', '500k', '1kk', '1.5kk', '2kk']);
+  assert.equal(mixed.yUnit, '');
+  assert.deepEqual(plain(mixed.yValues), [0, 100000, 500000, 1000000, 1500000, 2000000]);
+  assert.deepEqual(plain(mixed.yLabels), ['0', '100k', '500k', '1kk', '1.5kk', '2kk']);
+
+  const withUnit = REF.parseYLabelTexts(['0 RPS', '100k RPS', '1kk RPS']);
+  assert.equal(withUnit.yUnit, ' RPS', 'the unit after the shorthand is shared');
+  assert.deepEqual(plain(withUnit.yValues), [0, 100000, 1000000]);
+  assert.deepEqual(plain(withUnit.yLabels), ['0', '100k', '1kk']);
+
+  const kAsUnit = REF.parseYLabelTexts(['0k', '100k', '500k']);
+  assert.equal(kAsUnit.yUnit, 'k', 'a "k" on every label reads back as the unit field');
+  assert.deepEqual(plain(kAsUnit.yValues), [0, 100, 500]);
+  assert.equal(kAsUnit.yLabels, null);
+
+  const bytes = REF.parseYLabelTexts(['0kB', '512kB', '1024kB']);
+  assert.equal(bytes.yUnit, 'kB', 'kB is a unit, not a multiplier');
+  assert.deepEqual(plain(bytes.yValues), [0, 512, 1024]);
+});
+
+// ── sharedAxisUnit / parseXLabelTexts / withAxisUnit ───────────────────────
+test('sharedAxisUnit finds a suffix only when every label carries it', () => {
+  assert.equal(REF.sharedAxisUnit(['1h', '2h', '3h']), 'h');
+  assert.equal(REF.sharedAxisUnit(['0k', '100k']), 'k', 'verbatim tail wins');
+  assert.equal(REF.sharedAxisUnit(['100k RPS', '1kk RPS']), ' RPS', 'then the tail after the shorthand');
+  assert.equal(REF.sharedAxisUnit(['1h', '2d']), '');
+  assert.equal(REF.sharedAxisUnit(['1h', 'Jan']), '', 'a label without a number shares nothing');
+  assert.equal(REF.sharedAxisUnit(['Jan', 'Feb']), '');
+  assert.equal(REF.sharedAxisUnit([]), '');
+});
+
+test('parseXLabelTexts splits a shared suffix off the categories', () => {
+  const hours = REF.parseXLabelTexts(['1h', '2h', '3h']);
+  assert.equal(hours.xUnit, 'h');
+  assert.deepEqual(plain(hours.xLabels), ['1', '2', '3']);
+
+  const rps = REF.parseXLabelTexts(['100k RPS', '1kk RPS']);
+  assert.equal(rps.xUnit, ' RPS');
+  assert.deepEqual(plain(rps.xLabels), ['100k', '1kk']);
+
+  const months = REF.parseXLabelTexts(['Jan', 'Feb']);
+  assert.equal(months.xUnit, '');
+  assert.deepEqual(plain(months.xLabels), ['Jan', 'Feb'], 'text categories stay as they are');
+});
+
+test('withAxisUnit appends the unit to every label', () => {
+  assert.deepEqual(plain(REF.withAxisUnit(['1', '2'], 'h')), ['1h', '2h']);
+  assert.deepEqual(plain(REF.withAxisUnit(['Jan'], '')), ['Jan']);
+  assert.deepEqual(plain(REF.withAxisUnit(['Jan'], undefined)), ['Jan']);
 });
 
 test('parseYLabelTexts keeps non-numeric labels as custom text', () => {
@@ -517,9 +592,12 @@ test('every plugin agrees on the shared layout constants', () => {
 // ── Cross-plugin drift ──────────────────────────────────────────────────────
 const DRIFT_CASES = {
   formatYValue: [[0], [1.5], [0.30000000000000004], [1 / 3], [-42]],
-  parseAxisLabel: [['0'], ['150ms'], ['1:30'], ['$500'], ['Jan'], ['1,5']],
-  parseYLabelTexts: [[['0ms', '150ms']], [['0:00', '1:30']], [['Jan', 'Feb']]],
+  parseAxisLabel: [['0'], ['150ms'], ['1:30'], ['$500'], ['Jan'], ['1,5'], ['2 000 000'], ['1\u00A0500ms'], ['1.5kk'], ['100k RPS'], ['5kB']],
+  parseYLabelTexts: [[['0ms', '150ms']], [['0:00', '1:30']], [['Jan', 'Feb']], [['0', '100 000', '2 000 000']], [['0', '100k', '1kk']], [['0 RPS', '1k RPS', '1kk RPS']], [['0k', '100k']]],
   resolveYLabels: [[null, [1, 2.5]], [['a', 'b'], [1, 2]], [['a'], [1, 2]]],
+  sharedAxisUnit: [[['1h', '2h']], [['0k', '100k']], [['100k RPS', '1kk RPS']], [['Jan', 'Feb']]],
+  parseXLabelTexts: [[['1h', '2h']], [['100k RPS', '1kk RPS']], [['Jan', 'Feb']], [[]]],
+  withAxisUnit: [[['1', '2'], 'h'], [['Jan'], ''], [[], 'h']],
   selectDistinctColors: [[1], [3], [12]],
   paletteDistance: [[0, 1], [4, 10], [0, 67]],
   orderForAdjacency: [[[0, 1, 2, 3]], [[4, 10, 20, 30, 40]], [[1, 2]]],
