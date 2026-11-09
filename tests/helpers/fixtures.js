@@ -111,17 +111,17 @@ const REQUIRED_LAYERS = {
 /** chartParams keys the paste path relies on, per chart type. */
 const REQUIRED_PARAMS = {
   line: [
-    'yValues', 'yUnit', 'yLabels', 'xLabels', 'linesCount', 'lineStyle',
+    'yValues', 'yUnit', 'yLabels', 'xLabels', 'xUnit', 'linesCount', 'lineStyle',
     'topEvent', 'bottomEvent', 'showLegend', 'legendAlign', 'legendLabels',
     'allSeries', 'colors',
   ],
   area: [
-    'yValues', 'yUnit', 'yLabels', 'xLabels', 'areasCount', 'areaStyle',
+    'yValues', 'yUnit', 'yLabels', 'xLabels', 'xUnit', 'areasCount', 'areaStyle',
     'areaMode', 'fillHeight', 'fillOpacity', 'topEvent', 'bottomEvent',
     'showLegend', 'legendAlign', 'legendLabels', 'allSeries', 'colors',
   ],
   bar: [
-    'yValues', 'yUnit', 'yLabels', 'xLabels', 'barsCount', 'orientation',
+    'yValues', 'yUnit', 'yLabels', 'xLabels', 'xUnit', 'barsCount', 'orientation',
     'barMode', 'dense', 'barGap', 'fillOpacity', 'topEvent', 'bottomEvent',
     'showLegend', 'legendAlign', 'legendLabels', 'allSeries', 'colors',
   ],
@@ -152,6 +152,8 @@ const Y_AXIS_CASES = [
   { name: 'negatives', labels: ['-100', '-50', '0', '50'] },
   { name: 'currency prefix', labels: ['$0', '$500', '$1000'] },
   { name: 'large numbers', labels: ['0', '500000', '1000000'] },
+  { name: 'space-grouped large numbers', labels: ['0', '100 000', '1 000 000', '2 000 000'] },
+  { name: 'k / kk shorthand', labels: ['0', '100k', '500k', '1kk', '1.5kk', '2kk'] },
 ];
 
 /** Long/odd legend label sets: truncation, padding, pagination. */

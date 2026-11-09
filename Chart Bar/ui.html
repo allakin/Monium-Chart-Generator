@@ -386,6 +386,11 @@
   </div>
 
   <div class="field">
+    <label>X axis — unit</label>
+    <input type="text" id="xUnitInput" placeholder="h, d, k, etc." value="">
+  </div>
+
+  <div class="field">
     <label>Series count (1–20)</label>
     <input type="number" id="barsInput" value="3" min="1" max="20">
   </div>
@@ -493,7 +498,7 @@
 
   <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
 
-  <div class="footer">Monium Design System v2.5</div>
+  <div class="footer">Monium Design System v2.5.1</div>
 
   <script>
     var DEFAULTS = {
@@ -1171,8 +1176,14 @@
         var t = parseFloat(time[2]) + parseFloat(time[3]) / 60 + (time[4] ? parseFloat(time[4]) / 3600 : 0);
         return time[1] === '-' ? -t : t;
       }
-      var num = rest.match(/^[-+]?\d+(?:[.,]\d+)?/);
-      return num ? parseFloat(num[0].replace(',', '.')) : NaN;
+      // Digit groups may be split by a space ("2 000 000").
+      var num = rest.match(/^[-+]?(?:\d{1,3}(?:[ \u00A0\u202F\u2009]\d{3})+|\d+)(?:[.,]\d+)?/);
+      if (!num) return NaN;
+      var digits = num[0].replace(/[ \u00A0\u202F\u2009]/g, '').replace(',', '.');
+      // Thousands shorthand: "100k", "1.5kk", "2kkk" (Cyrillic "к" too);
+      // not when a letter follows — "5kB", "10kbps" are units.
+      var mult = rest.slice(num[0].length).match(/^ ?([kK\u043A\u041A]{1,3})(?![A-Za-z\u0400-\u04FF])/);
+      return parseFloat(mult ? digits + 'e' + 3 * mult[1].length : digits);
     }
 
     function formatAxisNumber(v) {
@@ -1213,6 +1224,7 @@
     function populateFromChartData(d) {
       document.getElementById('yInput').value = yFieldValue(d);
       document.getElementById('yUnitInput').value = d.yUnit || '';
+      document.getElementById('xUnitInput').value = d.xUnit || '';
       document.getElementById('xInput').value = (d.xLabels || []).join(', ');
       document.getElementById('barsInput').value = String(d.barsCount || 3);
       setRadioGroup('orientationGroup', d.orientation || 'vertical');
@@ -1271,6 +1283,7 @@
       var barsCount = Math.max(1, Math.min(20, parseInt(barsRaw) || 3));
 
       var yUnit = document.getElementById('yUnitInput').value.trim();
+      var xUnit = document.getElementById('xUnitInput').value.trim();
       var topEvent = document.getElementById('topEventCheck').checked;
       var bottomEvent = document.getElementById('bottomEventCheck').checked;
       var dense = document.getElementById('denseCheck').checked;
@@ -1288,6 +1301,7 @@
         yValues: yValues,
         yLabels: yLabels,
         yUnit: yUnit,
+        xUnit: xUnit,
         xLabels: xLabels,
         barsCount: barsCount,
         orientation: getOrientation(),

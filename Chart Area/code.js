@@ -419,24 +419,69 @@ function parseAxisLabel(str) {
   var time = rest.match(/^(-?)(\d{1,4}):([0-5]?\d)(?::([0-5]?\d))?/);
   if (time) {
     var t = parseFloat(time[2]) + parseFloat(time[3]) / 60 + (time[4] ? parseFloat(time[4]) / 3600 : 0);
-    return { value: time[1] === "-" ? -t : t, unit: rest.slice(time[0].length) };
+    return { value: time[1] === "-" ? -t : t, unit: rest.slice(time[0].length), scale: "" };
   }
-  var num = rest.match(/^[-+]?\d+(?:[.,]\d+)?/);
-  if (!num) return { value: NaN, unit: "" };
-  return { value: parseFloat(num[0].replace(",", ".")), unit: rest.slice(num[0].length) };
+  // Digit groups may be split by a space ("2 000 000"), as Russian locales
+  // write large numbers — a plain \d+ would read that as 2 with unit " 000 000".
+  var num = rest.match(/^[-+]?(?:\d{1,3}(?:[ \u00A0\u202F\u2009]\d{3})+|\d+)(?:[.,]\d+)?/);
+  if (!num) return { value: NaN, unit: "", scale: "" };
+  var digits = num[0].replace(/[ \u00A0\u202F\u2009]/g, "").replace(",", ".");
+  var tail = rest.slice(num[0].length);
+  // Thousands shorthand: "100k" = 100 000, "1.5kk" = 1 500 000, "2kkk" = 2e9
+  // (Cyrillic "к" too). Not when a letter follows — "5kB", "10kbps" are units.
+  var mult = tail.match(/^ ?([kK\u043A\u041A]{1,3})(?![A-Za-z\u0400-\u04FF])/);
+  // `unit` is everything after the number, as drawn; `scale` is its leading
+  // shorthand, if any, so a caller can tell "k" the multiplier from the unit.
+  // Scale through the exponent so "1.1k" is exactly 1100, not 1100.0000000000002.
+  if (mult) return { value: parseFloat(digits + "e" + 3 * mult[1].length), unit: tail, scale: mult[0] };
+  return { value: parseFloat(digits), unit: tail, scale: "" };
+}
+
+// The unit every axis label carries after its number, or "". The text after
+// the number is tried verbatim first, so a "k" typed into a unit field ("0k",
+// "100k", "500k") comes back as that unit. When labels mix thousands
+// shorthands ("100k RPS", "1kk RPS") the unit is what follows the shorthand,
+// and the shorthand stays in the label to scale its value. A label without a
+// number ("Jan") shares no unit with anything.
+function sharedAxisUnit(chars) {
+  var parts = [];
+  for (var i = 0; i < chars.length; i++) parts.push(parseAxisLabel(chars[i]));
+  function shared(afterScale) {
+    var unit = null;
+    for (var j = 0; j < parts.length; j++) {
+      var u = afterScale ? parts[j].unit.slice(parts[j].scale.length) : parts[j].unit;
+      if (unit === null) unit = u;
+      else if (u !== unit) return "";
+    }
+    return unit || "";
+  }
+  return shared(false) || shared(true);
+}
+
+// X labels are categories drawn as typed, with the "X axis — unit" suffix
+// appended at draw time. Reading a chart back from its layers, a suffix every
+// label shares is split off into the unit again — same rules as the Y axis.
+function parseXLabelTexts(chars) {
+  var xUnit = sharedAxisUnit(chars);
+  var labels = [];
+  for (var i = 0; i < chars.length; i++) {
+    labels.push(xUnit ? chars[i].slice(0, chars[i].length - xUnit.length) : chars[i]);
+  }
+  return { xLabels: labels, xUnit: xUnit };
+}
+
+// Axis labels as drawn: each one followed by the axis unit.
+function withAxisUnit(labels, unit) {
+  var out = [];
+  for (var i = 0; i < labels.length; i++) out.push(labels[i] + (unit || ""));
+  return out;
 }
 
 // Turns raw Y label texts (bottom → top order) into positions, a shared unit
 // and, when the texts aren't plain numbers, the labels to draw verbatim.
 function parseYLabelTexts(chars) {
   var i;
-  var yUnit = chars.length > 0 ? (parseAxisLabel(chars[0]).unit || "") : "";
-  // A trailing unit only counts when every label carries it.
-  if (yUnit) {
-    for (i = 0; i < chars.length; i++) {
-      if (chars[i].slice(-yUnit.length) !== yUnit) { yUnit = ""; break; }
-    }
-  }
+  var yUnit = sharedAxisUnit(chars);
 
   // Purely textual labels (a horizontal bar chart's category axis) carry no
   // position, so they are skipped — the caller treats that as "not an axis".
@@ -707,8 +752,13 @@ function readChartParamsFromLayers(chartFrame) {
     if (yLabels) yLabels[pi] = pairs[pi].l;
   }
 
+  // A suffix every X label shares goes back to the "X axis — unit" field.
+  var parsedX = parseXLabelTexts(xLabels);
+  xLabels = parsedX.xLabels;
+  var xUnit = parsedX.xUnit;
+
   var recovered = {
-    yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
+    yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels, xUnit: xUnit,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
     fillHeight: fillHeight, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent,
     showLegend: !!legend,
@@ -989,6 +1039,7 @@ async function renderChart(params, exactData) {
   var fillHeight = params.fillHeight || false;
   var fillOpacity = params.fillOpacity;
   var yUnit = params.yUnit || "";
+  var xUnit = params.xUnit || "";
   var topEvent = params.topEvent || false;
   var bottomEvent = params.bottomEvent || false;
   var replaceMode = exactData ? true : (params.replace || false);
@@ -1179,7 +1230,7 @@ async function renderChart(params, exactData) {
 
   var gridNodes = drawGrid(container, plot, yValues, xLabels);
   var yLabelNodes = drawYLabels(container, plot, yValues, yMin, yMax, yUnit, yLabels);
-  var xLabelNodes = drawXLabels(container, plot, xLabels);
+  var xLabelNodes = drawXLabels(container, plot, withAxisUnit(xLabels, xUnit));
 
   var areaNodes = drawAreas(container, plot, allSeries, yMin, yMax, areaStyle, areaMode, fillOpacity, distinctColors);
 
@@ -1209,7 +1260,7 @@ async function renderChart(params, exactData) {
   }
 
   var chartParams = {
-    yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
+    yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels, xUnit: xUnit,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
     fillHeight: fillHeight, fillOpacity: fillOpacity, topEvent: topEvent, bottomEvent: bottomEvent,
     showLegend: showLegend,

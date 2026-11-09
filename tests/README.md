@@ -21,7 +21,7 @@ node --test --test-name-pattern "legend" tests/*.test.js   # по имени т�
 `node --test tests/` (директорией) в Node 25 не работает — передавайте glob
 `tests/*.test.js`, как в npm-скриптах.
 
-Итог сейчас: **1013 тестов, 1004 проходит, 9 помечены `todo`** (это
+Итог сейчас: **1118 тестов, 1109 проходит, 9 помечены `todo`** (это
 задокументированные баги, см. «Известные баги» ниже). Полный прогон ~1.2 с.
 
 ## Что покрыто
@@ -29,7 +29,7 @@ node --test --test-name-pattern "legend" tests/*.test.js   # по имени т�
 | Файл | Тестов | О чём |
 |---|---|---|
 | `harness.test.js` | 17 | сам мок: валидация `resize`/`arcData`/`vectorPaths`, группировка, метрики текста, загрузка всех пяти плагинов, детерминированный PRNG |
-| `helpers-unit.test.js` | 37 | чистые функции: `formatYValue`, `parseAxisLabel`, `parseYLabelTexts`, `resolveYLabels`, `normalizeLegendLabels`, `packLegendRows`, `measureLegendItems`, `selectDistinctColors`, `paletteDistance`, `orderForAdjacency`, `buildEventSegments`, `buildCurvePath`, `detectCurveStyle`, константы стайлгайда, палитра + расхождения между копиями функций в пяти плагинах |
+| `helpers-unit.test.js` | 44 | чистые функции: `formatYValue`, `parseAxisLabel` (группы разрядов, `k`/`kk`), `sharedAxisUnit`, `parseXLabelTexts`, `withAxisUnit`, `parseYLabelTexts`, `resolveYLabels`, `normalizeLegendLabels`, `packLegendRows`, `measureLegendItems`, `selectDistinctColors`, `paletteDistance`, `orderForAdjacency`, `buildEventSegments`, `buildCurvePath`, `detectCurveStyle`, константы стайлгайда, палитра + расхождения между копиями функций в пяти плагинах |
 | `pie.test.js` | 74 | структура, геометрия секторов, углы и зазоры, дырка донута, скругления, подписи значений, центральная сумма, легенда с пагинацией, вырожденные данные, регрессия 233×95 |
 | `line-colors.test.js` | 97 | пикер цветов линий (плагинная часть — против отдельного плагина и сводного генератора, UI — только отдельный): палитра из `code.js`, закреплённый цвет в линии и легенде, авто-цвета отличаются от закреплённых, сохранение при перегенерации и copy → paste, восстановление пикера в UI, перекраска выделенного графика на лету, кнопка «Auto», поиск вложенного и переименованного графика, сортировка палитры по оттенку, состояние пикера после «Get values from chart», восстановление легенды и цветов из слоёв (график сводного генератора) |
 | `area-colors.test.js` | 107 | то же для Chart Area: заливка с сохранением прозрачности, обводка не трогается, stacked без изменения геометрии, маркеры-точки легенды |
@@ -44,6 +44,8 @@ node --test --test-name-pattern "legend" tests/*.test.js   # по имени т�
 | `copy-loader.test.js` | 51 | UI-логика кнопки «Copy chart»: состояние загрузки блока буфера, текст сводки и тоста, дизейбл кнопок, отмена и повторный клик, апдейт выделения во время лоадера, единый `COPY_LOADER_MS` во всех пяти плагинах |
 | `layer-parsing.test.js` | 38 | восстановление настроек из слоёв, когда `pluginData` потерян (fallback-парсер) |
 | `small-frames.test.js` | 24 | матрица: 4 типа × 4–5 наборов опций × 12 размеров фрейма от 1200×800 до 20×20 |
+| `large-numbers.test.js` | 36 | большие значения оси: `2 000 000` и `100k` / `1.5kk` — парсинг ввода в UI, порядок и отсутствие наложений подписей (Line, Area, Bar в обеих ориентациях), восстановление из слоёв, связка с «Y axis — unit» |
+| `x-unit.test.js` | 62 | «X axis — unit»: суффикс у каждой категории, `chartParams`, ширина левого отступа горизонтального Bar, восстановление из слоёв (в т.ч. с `k`/`kk`), copy → paste, поле в UI отдельных плагинов и вкладок сводного |
 
 Каждый тест чарта прогоняется дважды: против отдельного плагина и против
 соответствующей вкладки сводного генератора, поэтому расхождение между двумя
