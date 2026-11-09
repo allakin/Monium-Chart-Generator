@@ -56,7 +56,10 @@ function pluginPath(key, file) {
 function loadPlugin(key, options) {
   const opts = options || {};
   const source = fs.readFileSync(pluginPath(key, 'code.js'), 'utf8');
-  const mock = createFigmaMock();
+  // The mock enforces the plugin's real manifest (e.g. documentAccess:
+  // "dynamic-page" forbids the synchronous figma.getNodeById).
+  const manifest = JSON.parse(fs.readFileSync(pluginPath(key, 'manifest.json'), 'utf8'));
+  const mock = createFigmaMock({ documentAccess: manifest.documentAccess });
   const { figma, doc, page, log, listeners } = mock;
 
   const state = { rng: mulberry32(opts.seed === undefined ? 1234 : opts.seed) };

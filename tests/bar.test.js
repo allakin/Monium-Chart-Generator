@@ -407,17 +407,11 @@ for (const variant of VARIANTS) {
     assertLegendBelowPlot(container);
   });
 
-  // KNOWN BUG (standalone Chart Bar only): legend labels are padded to the
-  // requested barsCount at Chart Bar/code.js:476-486, but normal mode forces
-  // barsCount = 1 later, at :528. A normal-mode chart with 4 labels therefore
-  // draws 4 legend entries for 1 series, all in the same color. The combined
-  // generator computes the legend after finalising barsCount and is correct.
-  const legendEntryOpts =
-    variant.key === 'bar'
-      ? { todo: 'BUG: legend padded before barMode "normal" forces barsCount = 1' }
-      : {};
-
-  test('bar: normal mode shows a single legend entry' + V, legendEntryOpts, async () => {
+  // Was a known bug in standalone Chart Bar: legend labels were padded to the
+  // requested barsCount before normal mode forced barsCount = 1, so 4 labels
+  // drew 4 same-colored entries for 1 series. Fixed with the bar color picker:
+  // normal mode now settles barsCount = 1 before the legend is sized.
+  test('bar: normal mode shows a single legend entry' + V, async () => {
     const { container } = await render(variant.key, {
       barMode: 'normal',
       barsCount: 4,

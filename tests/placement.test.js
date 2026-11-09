@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { loadPlugin, CHART_NAMES } = require('./helpers/load-plugin');
+const { loadPlugin, CHART_NAMES, PLUGIN_DIRS } = require('./helpers/load-plugin');
 const { payload } = require('./helpers/fixtures');
 const { descendants, childNames } = require('./helpers/inspect');
 
@@ -125,6 +125,16 @@ for (const entry of TYPES) {
       assert.equal(h.chart().width, 360);
     });
 
+    test('a remembered frame that was deleted falls back to the page' + V, async () => {
+      const h = loadPlugin(key, { seed: 5 });
+      const frame = h.selectFrame(360, 240);
+      h.clearSelection();
+      frame.remove();
+      await h.generate(payload(entry.type));
+      assert.deepEqual(h.errorNotifications().map((n) => n.message), [], 'no error');
+      assert.equal(h.chart().parent.type, 'PAGE', 'the chart goes to the page');
+    });
+
     test('a multi-node selection is not treated as a target' + V, async () => {
       const h = loadPlugin(key, { seed: 5 });
       const a = h.createNode('FRAME', 'A');
@@ -184,20 +194,23 @@ test('combined generator: a chart nested inside a group is still found', async (
   assert.equal(h.charts().length, 1, 'the nested chart was replaced, not duplicated');
 });
 
-test('standalone plugins only look one level deep for an existing chart', async () => {
-  // Documented divergence: the standalone plugins scan direct children only,
-  // so a chart wrapped in a group is not found and a second one is inserted.
-  // The combined generator walks the tree (see the test above).
-  const h = loadPlugin('bar', { seed: 5 });
-  const frame = h.selectFrame(600, 400);
-  await h.generate(payload('bar'));
-  const wrapper = h.figma.group([h.chart()], frame);
-  wrapper.name = 'Wrapper';
+// Since the color picker, the standalone plugins walk the tree like the
+// combined generator (see the test above) and regenerate a nested chart where
+// it lives.
+for (const key of ['line', 'area', 'bar', 'pie']) {
+  test('standalone ' + PLUGIN_DIRS[key] + ': a chart nested inside a group is replaced in place', async () => {
+    const h = loadPlugin(key, { seed: 5 });
+    const frame = h.selectFrame(600, 400);
+    await h.generate(payload(key));
+    const wrapper = h.figma.group([h.chart()], frame);
+    wrapper.name = 'Wrapper';
 
-  h.select(frame);
-  await h.generate(payload('bar', { replace: true }));
-  assert.equal(h.charts().length, 2, 'current behaviour: a nested chart is not replaced');
-});
+    h.select(frame);
+    await h.generate(payload(key, { replace: true }));
+    assert.equal(h.charts().length, 1, 'the nested chart was replaced, not duplicated');
+    assert.equal(h.chart().parent.id, wrapper.id, 'and it stays inside its wrapper');
+  });
+}
 
 test('combined generator: every chart type is detected by container name', async () => {
   const h = loadPlugin('all', { seed: 5 });

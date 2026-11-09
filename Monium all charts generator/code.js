@@ -241,6 +241,213 @@ function selectDistinctColors(count) {
   return result;
 }
 
+// ─── Shared: User-pinned series colors (color picker) ──────────
+// The UI color picker offers the generation palette. A pinned color travels as
+// a "#RRGGBB" string; palette hexes are derived from the palette entries
+// themselves, so hex → palette lookup is an exact round trip. A valid hex that
+// is not in the palette (a chart from an older palette) stays pinned as is.
+// null means "Auto": the series gets a generated color that stays distinct
+// from every pinned one. Pins live in chartParams under the same field names as
+// in the standalone plugins (PINS_KEY), next to `customColors` (picker on/off).
+var PINS_KEY = { line: "lineColors", area: "areaColors", bar: "barColors", pie: "segmentColors" };
+
+function colorToHex(c) {
+  var parts = [c.r, c.g, c.b];
+  var hex = "#";
+  for (var i = 0; i < parts.length; i++) {
+    var v = Math.max(0, Math.min(255, Math.round(parts[i] * 255)));
+    hex += (v < 16 ? "0" : "") + v.toString(16).toUpperCase();
+  }
+  return hex;
+}
+
+var PALETTE_HEX = [];
+for (var ph = 0; ph < PALETTE.length; ph++) PALETTE_HEX.push(colorToHex(PALETTE[ph]));
+
+function normalizeHex(hex) {
+  if (typeof hex !== "string") return null;
+  var h = hex.trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(h) ? h : null;
+}
+
+function paletteIndexOfHex(hex) {
+  var h = normalizeHex(hex);
+  return h ? PALETTE_HEX.indexOf(h) : -1;
+}
+
+// The color to draw for a pinned hex: the exact palette entry when it is one,
+// otherwise the hex itself.
+function colorOfHex(hex) {
+  var idx = paletteIndexOfHex(hex);
+  if (idx >= 0) return PALETTE[idx];
+  var h = normalizeHex(hex);
+  return {
+    r: parseInt(h.slice(1, 3), 16) / 255,
+    g: parseInt(h.slice(3, 5), 16) / 255,
+    b: parseInt(h.slice(5, 7), 16) / 255
+  };
+}
+
+// Exactly `count` entries: an uppercase hex for a pinned series, null for Auto.
+// Anything that is not a valid #RRGGBB is dropped back to Auto.
+function normalizeSeriesColors(raw, count) {
+  var out = [];
+  for (var i = 0; i < count; i++) {
+    out.push((raw && i < raw.length) ? normalizeHex(raw[i]) : null);
+  }
+  return out;
+}
+
+// Picker state for "Get values from chart": sent by the UI, or for older
+// payloads inferred from whether anything is pinned.
+function resolveCustomColors(msg, pins) {
+  if (msg.customColors !== undefined) return !!msg.customColors;
+  return pins.some(function (c) { return c !== null; });
+}
+
+// OKLab coordinates of any color under every vision model (same layout as
+// PALETTE_LAB entries), so off-palette pins take part in distance checks.
+function colorLabVariants(c) {
+  var lr = srgbChannelToLinear(c.r);
+  var lg = srgbChannelToLinear(c.g);
+  var lb = srgbChannelToLinear(c.b);
+  var variants = [];
+  for (var v = 0; v < VISION_MODELS.length; v++) {
+    var m = VISION_MODELS[v];
+    variants.push(linearRgbToOklab(
+      m[0] * lr + m[1] * lg + m[2] * lb,
+      m[3] * lr + m[4] * lg + m[5] * lb,
+      m[6] * lr + m[7] * lg + m[8] * lb
+    ));
+  }
+  return variants;
+}
+
+function labDistance(la, lb) {
+  var worst = Infinity;
+  for (var v = 0; v < la.length; v++) {
+    var dl = la[v][0] - lb[v][0];
+    var da = la[v][1] - lb[v][1];
+    var db = la[v][2] - lb[v][2];
+    var d = Math.sqrt(dl * dl + da * da + db * db) * 100;
+    if (d < worst) worst = d;
+  }
+  return worst;
+}
+
+// Series colors with pinned ones in place. Without pins (and nothing to avoid)
+// this is exactly selectDistinctColors. With pins, every Auto slot gets a color
+// picked by a randomized maximin against the pinned + already picked ones: the
+// candidate is drawn from those within 85% of the best minimum distance, so
+// regenerating still varies the Auto series while keeping them apart from the
+// pinned ones. `avoid` (optional hex list) are colors to stay away from without
+// placing them — e.g. the color a series had before the user asked for a new
+// one. `ring` (Pie): slices touch, so the picked Auto colors are then arranged
+// over the Auto slots to keep neighbours (last touches first) apart.
+function resolveSeriesColors(count, pins, avoid, ring) {
+  var pinned = normalizeSeriesColors(pins, count);
+  var usedLab = [];
+  var usedIdx = [];
+  var i;
+  var addUsed = function (hex) {
+    var pi = paletteIndexOfHex(hex);
+    if (pi >= 0) usedIdx.push(pi);
+    usedLab.push(pi >= 0 ? PALETTE_LAB[pi] : colorLabVariants(colorOfHex(hex)));
+  };
+  for (i = 0; i < count; i++) {
+    if (pinned[i] !== null) addUsed(pinned[i]);
+  }
+  if (avoid) {
+    for (i = 0; i < avoid.length; i++) {
+      if (normalizeHex(avoid[i])) addUsed(normalizeHex(avoid[i]));
+    }
+  }
+  if (usedLab.length === 0) return selectDistinctColors(count);
+
+  var available = [];
+  for (i = 0; i < PALETTE.length; i++) {
+    if (usedIdx.indexOf(i) === -1) available.push(i);
+  }
+  var picked = [];
+  var result = [];
+  for (i = 0; i < count; i++) {
+    if (pinned[i] !== null) {
+      result.push(colorOfHex(pinned[i]));
+      continue;
+    }
+    if (available.length === 0) {
+      // More series than palette colors — reuse, the way selectDistinctColors cycles.
+      result.push(PALETTE[picked.length ? picked[i % picked.length] : i % PALETTE.length]);
+      continue;
+    }
+    var scores = [];
+    var best = -1;
+    for (var j = 0; j < available.length; j++) {
+      var minDist = Infinity;
+      for (var k = 0; k < usedLab.length; k++) {
+        var d = labDistance(PALETTE_LAB[available[j]], usedLab[k]);
+        if (d < minDist) minDist = d;
+      }
+      scores.push(minDist);
+      if (minDist > best) best = minDist;
+    }
+    var candidates = [];
+    for (j = 0; j < available.length; j++) {
+      if (scores[j] >= best * 0.85) candidates.push(j);
+    }
+    var pickPos = candidates[Math.floor(Math.random() * candidates.length)];
+    var pick = available[pickPos];
+    available.splice(pickPos, 1);
+    usedLab.push(PALETTE_LAB[pick]);
+    picked.push(pick);
+    result.push(PALETTE[pick]);
+  }
+  return ring ? arrangeAutoForAdjacency(result, pinned) : result;
+}
+
+// Pie only: reassigns the Auto colors among the Auto slots so each one sits far
+// from its already decided neighbours: the previous slot, and the next one when
+// it is pinned (the ring wraps). Pinned slots never move.
+function arrangeAutoForAdjacency(colors, pinned) {
+  var n = colors.length;
+  if (n < 3) return colors;
+  var autoSlots = [];
+  var pool = [];
+  for (var i = 0; i < n; i++) {
+    if (pinned[i] === null) { autoSlots.push(i); pool.push(colors[i]); }
+  }
+  if (pool.length < 2) return colors;
+  var out = colors.slice();
+  var decided = [];
+  for (i = 0; i < n; i++) decided.push(pinned[i] !== null);
+  var labOf = function (c) {
+    var pi = paletteIndexOfHex(colorToHex(c));
+    return pi >= 0 ? PALETTE_LAB[pi] : colorLabVariants(c);
+  };
+  for (var s = 0; s < autoSlots.length; s++) {
+    var slot = autoSlots[s];
+    var neighbours = [];
+    var prev = (slot - 1 + n) % n;
+    var next = (slot + 1) % n;
+    if (decided[prev]) neighbours.push(labOf(out[prev]));
+    if (decided[next]) neighbours.push(labOf(out[next]));
+    var bestPos = 0;
+    var bestScore = -1;
+    for (var p = 0; p < pool.length; p++) {
+      var score = Infinity;
+      for (var q = 0; q < neighbours.length; q++) {
+        var d = labDistance(labOf(pool[p]), neighbours[q]);
+        if (d < score) score = d;
+      }
+      if (score > bestScore) { bestScore = score; bestPos = p; }
+    }
+    out[slot] = pool[bestPos];
+    pool.splice(bestPos, 1);
+    decided[slot] = true;
+  }
+  return out;
+}
+
 // ─── Shared: Constants ─────────────────────────────────────────
 var COLOR_GRID = { r: 0.898, g: 0.898, b: 0.898 };
 var COLOR_AXIS = { r: 0, g: 0, b: 0 };
@@ -271,13 +478,24 @@ var LEGEND_SIDE_MARGIN = 16;   // Pie only
 var MIN_PIE_SIZE = 8;
 
 // ─── Shared: Selection tracking ────────────────────────────────
-var lastSelectedFrameId = null;
+// The last selected frame itself, not its id: with documentAccess
+// "dynamic-page" Figma forbids the synchronous figma.getNodeById, and the
+// async lookup would make every render path async. A node reference stays
+// valid across selection changes; `removed` tells when it was deleted since.
+var lastSelectedFrame = null;
 
 function getSelectedFrame() {
   var sel = figma.currentPage.selection;
   if (sel.length === 1) {
     var n = sel[0];
     if (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "INSTANCE") return n;
+    // A layer inside a chart (a line, a bar, a label, the legend) stands for
+    // the chart that holds it — designers often click straight into the chart.
+    var p = n.parent;
+    while (p && p.type !== "PAGE" && p.type !== "DOCUMENT") {
+      if (isChartFrame(p)) return p;
+      p = p.parent;
+    }
   }
   return null;
 }
@@ -285,35 +503,37 @@ function getSelectedFrame() {
 function getTargetFrame() {
   var f = getSelectedFrame();
   if (f) return f;
-  if (lastSelectedFrameId) {
-    var n = figma.getNodeById(lastSelectedFrameId);
-    if (n && (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "INSTANCE")) return n;
-  }
+  var n = lastSelectedFrame;
+  // Check `removed` first: other properties of a deleted node throw in Figma.
+  if (n && !n.removed && (n.type === "FRAME" || n.type === "COMPONENT" || n.type === "INSTANCE")) return n;
   return null;
 }
 
 // ─── Shared: Chart detection (unified for all types) ───────────
+// A chart container: named after a chart type, or renamed by the designer but
+// still carrying chart data.
+function isChartFrame(n) {
+  if (!n || n.type !== "FRAME") return false;
+  if (CHART_NAMES.indexOf(n.name) !== -1) return true;
+  try { return !!n.getPluginData("chartParams"); } catch (e) { return false; }
+}
+
 function findChartFrame(frame) {
   // Frame itself matches
-  for (var ni = 0; ni < CHART_NAMES.length; ni++) {
-    if (frame.name === CHART_NAMES[ni]) return frame;
-  }
-  // BFS through descendants (FRAME / COMPONENT / INSTANCE / GROUP) so charts
-  // wrapped in autolayout or nested containers are still found.
+  if (CHART_NAMES.indexOf(frame.name) !== -1 || isChartFrame(frame)) return frame;
+  // BFS through descendants (FRAME / COMPONENT / INSTANCE / GROUP / SECTION) so
+  // charts wrapped in autolayout, cards or nested containers are still found.
   if ("children" in frame) {
     var queue = [];
     for (var qi = 0; qi < frame.children.length; qi++) queue.push(frame.children[qi]);
     var hops = 0;
-    var MAX_HOPS = 200; // safety cap
+    var MAX_HOPS = 300; // safety cap
     while (queue.length > 0 && hops < MAX_HOPS) {
       var node = queue.shift();
       hops++;
-      if (node.type === "FRAME") {
-        for (var nj = 0; nj < CHART_NAMES.length; nj++) {
-          if (node.name === CHART_NAMES[nj]) return node;
-        }
-      }
-      if ((node.type === "FRAME" || node.type === "COMPONENT" || node.type === "INSTANCE" || node.type === "GROUP") && "children" in node) {
+      if (isChartFrame(node)) return node;
+      if ((node.type === "FRAME" || node.type === "COMPONENT" || node.type === "INSTANCE" ||
+           node.type === "GROUP" || node.type === "SECTION") && "children" in node) {
         for (var qj = 0; qj < node.children.length; qj++) queue.push(node.children[qj]);
       }
     }
@@ -321,11 +541,34 @@ function findChartFrame(frame) {
   return null;
 }
 
+// Chart type by container name; a renamed chart is typed by its stored params
+// (each type has its own count field), then by its data layer.
 function detectChartType(chartFrame) {
   if (chartFrame.name === "Chart Line") return "line";
   if (chartFrame.name === "Chart Bar") return "bar";
   if (chartFrame.name === "Chart Area") return "area";
   if (chartFrame.name === "Chart Pie") return "pie";
+  var raw = "";
+  try { raw = chartFrame.getPluginData("chartParams"); } catch (e) {}
+  if (raw) {
+    try {
+      var p = JSON.parse(raw);
+      if (p.chartType && PINS_KEY[p.chartType]) return p.chartType;
+      if (p.linesCount !== undefined) return "line";
+      if (p.areasCount !== undefined) return "area";
+      if (p.barsCount !== undefined) return "bar";
+      if (p.segmentsCount !== undefined || p.pieStyle !== undefined) return "pie";
+    } catch (e) {}
+  }
+  if ("children" in chartFrame) {
+    for (var i = 0; i < chartFrame.children.length; i++) {
+      var n = chartFrame.children[i].name;
+      if (n === "Lines") return "line";
+      if (n === "Areas") return "area";
+      if (n === "Bars") return "bar";
+      if (n === "Slices") return "pie";
+    }
+  }
   return null;
 }
 
@@ -466,12 +709,252 @@ function detectCurveStyle(vectorNode, xLabelsCount) {
   }
 }
 
+// ─── Shared: Series layers of a drawn chart ────────────────────
+// The data layer of each type: "Lines" (VECTOR strokes), "Areas" (VECTOR
+// fills), "Bars" (RECTANGLE fills), "Slices" (ELLIPSE arcs). groupNodes leaves
+// a single node ungrouped under the same name, so both shapes are handled.
+var SERIES_LAYER = {
+  line: { name: "Lines", type: "VECTOR" },
+  area: { name: "Areas", type: "VECTOR" },
+  bar: { name: "Bars", type: "RECTANGLE" },
+  pie: { name: "Slices", type: "ELLIPSE" }
+};
+
+function chartSeriesNodes(chartFrame, chartType) {
+  var spec = SERIES_LAYER[chartType];
+  if (!spec || !("children" in chartFrame)) return [];
+  for (var i = 0; i < chartFrame.children.length; i++) {
+    var c = chartFrame.children[i];
+    if (c.name !== spec.name) continue;
+    if (c.type === spec.type) return [c];
+    if (c.type === "GROUP" && "children" in c) {
+      var out = [];
+      for (var j = 0; j < c.children.length; j++) {
+        if (c.children[j].type === spec.type) out.push(c.children[j]);
+      }
+      return out;
+    }
+  }
+  return [];
+}
+
+// Legend markers in series order: 14×2 rectangles for Line, dots for the rest.
+// Only the first legend page is drawn, and it always starts at series 0, so
+// marker k belongs to series k.
+function chartLegendMarkers(chartFrame, chartType) {
+  if (!("children" in chartFrame)) return [];
+  var markerType = (chartType === "line") ? "RECTANGLE" : "ELLIPSE";
+  for (var i = 0; i < chartFrame.children.length; i++) {
+    var c = chartFrame.children[i];
+    if (c.name === "Legend" && c.type === "GROUP" && "children" in c) {
+      var out = [];
+      for (var j = 0; j < c.children.length; j++) {
+        if (c.children[j].type === markerType) out.push(c.children[j]);
+      }
+      return out;
+    }
+  }
+  return [];
+}
+
+function fillColorOf(node) {
+  var f = node.fills && node.fills[0];
+  return (f && f.color) ? { r: f.color.r, g: f.color.g, b: f.color.b } : PALETTE[0];
+}
+
+function strokeColorOf(node) {
+  var s = node.strokes && node.strokes[0];
+  return (s && s.color) ? { r: s.color.r, g: s.color.g, b: s.color.b } : PALETTE[0];
+}
+
+// The series color as drawn: the stroke of a line, the fill of the rest.
+function seriesColorOf(node, chartType) {
+  return chartType === "line" ? strokeColorOf(node) : fillColorOf(node);
+}
+
+// Bar: the series each bar belongs to. drawBars walks category by category
+// and, inside a category, series by series — in every mode, orientation and
+// with dense on — so bar k belongs to series k % count when the bar count fits;
+// otherwise (layers edited by hand) bars are matched by fill color.
+function seriesOfBars(rects, count, colors) {
+  var out = [];
+  var i;
+  if (rects.length % count === 0) {
+    for (i = 0; i < rects.length; i++) out.push(i % count);
+    return out;
+  }
+  for (i = 0; i < rects.length; i++) {
+    var hex = colorToHex(fillColorOf(rects[i]));
+    var found = -1;
+    for (var s = 0; s < count; s++) {
+      if (colorToHex(colors[s]) === hex) { found = s; break; }
+    }
+    out.push(found);
+  }
+  return out;
+}
+
+// Pie: which segments drawSlices actually drew — a segment too thin for its
+// gap is skipped, so slice layers and segments only line up through this list.
+function drawnSegmentIndices(values, gapDeg) {
+  var out = [];
+  var total = 0;
+  var i;
+  for (i = 0; i < values.length; i++) total += values[i];
+  if (total === 0) return out;
+  var gapRad = (gapDeg || 0) * Math.PI / 180;
+  var startAngle = -Math.PI / 2;
+  for (i = 0; i < values.length; i++) {
+    var sliceAngle = (values[i] / total) * Math.PI * 2;
+    if (sliceAngle < 0.001) { startAngle += sliceAngle; continue; }
+    var a1 = startAngle + gapRad / 2;
+    var a2 = startAngle + sliceAngle - gapRad / 2;
+    if (a2 > a1) out.push(i);
+    startAngle += sliceAngle;
+  }
+  return out;
+}
+
+// ─── Shared: Legend recovery from layers ───────────────────────
+// Page-space bounds. Children of a group are positioned against the nearest
+// frame in Figma, so local x/y of legend items and grid lines are not directly
+// comparable — absolute bounds are.
+function absBoundsOf(n) {
+  var b = n.absoluteBoundingBox;
+  if (b) return { x: b.x, y: b.y, w: b.width, h: b.height };
+  return { x: n.x, y: n.y, w: n.width, h: n.height };
+}
+
+// The band the legend is aligned in: the plot for axis charts (the "Grid"
+// group starts 6px left of the plot and ends at its right edge, in both bar
+// orientations), the frame minus LEGEND_SIDE_MARGIN per side for Pie.
+function legendBandOf(chartFrame, chartType, groups) {
+  if (chartType === "pie") {
+    var f = absBoundsOf(chartFrame);
+    return { left: f.x + LEGEND_SIDE_MARGIN, right: f.x + f.w - LEGEND_SIDE_MARGIN };
+  }
+  if (!groups["Grid"]) return null;
+  var g = absBoundsOf(groups["Grid"]);
+  return { left: g.x + 6, right: g.x + g.w };
+}
+
+// Legend settings from the "Legend" group: labels in reading order (rows top →
+// bottom, items left → right) and the alignment of the first row in its band.
+// Markers are 14×2 rectangles 6px below the row top (Line) or dots centred on
+// the row (Area / Bar / Pie). Only the first legend page is drawn, so on a
+// paginated legend the later labels are unknown — they come back as
+// "Series N". A label cut with "…" is read as drawn.
+function readLegendFromLayers(legendGroup, band) {
+  if (!legendGroup || !("children" in legendGroup)) return null;
+  var kids = legendGroup.children;
+  var hasPaginator = false;
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i].type === "VECTOR") { hasPaginator = true; break; }
+  }
+  var items = [];
+  var markers = [];
+  var markerOffset = 6;
+  for (i = 0; i < kids.length; i++) {
+    var k = kids[i];
+    if (k.type === "RECTANGLE") { markers.push(k); markerOffset = 6; }
+    if (k.type === "ELLIPSE") { markers.push(k); markerOffset = (LEGEND_ROW_H - LEGEND_DOT_SIZE) / 2; }
+    if (k.type !== "TEXT") continue;
+    if (hasPaginator && /^\d+\/\d+$/.test(k.characters)) continue; // "1/3"
+    items.push(k);
+  }
+  if (items.length === 0) return null;
+  var ROW_TOLERANCE = 3;
+  items.sort(function (a, b) {
+    if (Math.abs(a.y - b.y) > ROW_TOLERANCE) return a.y - b.y;
+    return a.x - b.x;
+  });
+  var labels = [];
+  for (i = 0; i < items.length; i++) labels.push(items[i].characters);
+
+  var align = "left";
+  if (band) {
+    var rowY = absBoundsOf(items[0]).y;
+    var rowLeft = Infinity;
+    var rowRight = -Infinity;
+    for (i = 0; i < items.length; i++) {
+      var tb = absBoundsOf(items[i]);
+      if (Math.abs(tb.y - rowY) > ROW_TOLERANCE) continue;
+      if (tb.x + tb.w > rowRight) rowRight = tb.x + tb.w;
+    }
+    for (i = 0; i < markers.length; i++) {
+      var mb = absBoundsOf(markers[i]);
+      if (Math.abs(mb.y - markerOffset - rowY) > ROW_TOLERANCE) continue;
+      if (mb.x < rowLeft) rowLeft = mb.x;
+    }
+    if (rowLeft !== Infinity && rowRight !== -Infinity) {
+      if (Math.abs(rowLeft - band.left) <= 1.5) align = "left";
+      else if (Math.abs(rowRight - band.right) <= 1.5) align = "right";
+      else align = "center";
+    }
+  }
+  return { labels: labels, align: align };
+}
+
+// Adds what the layers tell about the legend and the series colors to a
+// recovered params object (fallback parser, charts without readable pluginData
+// — e.g. drawn by a standalone plugin: pluginData is per plugin id in Figma).
+function addLegendAndColorsFromLayers(result, chartFrame, chartType, groups, count) {
+  var legend = readLegendFromLayers(groups["Legend"], legendBandOf(chartFrame, chartType, groups));
+  result.showLegend = !!legend;
+  result.legendAlign = legend ? legend.align : "left";
+  result.legendLabels = legend ? legend.labels : [];
+  var nodes = chartSeriesNodes(chartFrame, chartType);
+  if (nodes.length >= count && count > 0) {
+    // Bars carry one color per series in their first `count` rectangles.
+    var colors = [];
+    for (var i = 0; i < count; i++) colors.push(seriesColorOf(nodes[i], chartType));
+    if (chartType !== "bar" && nodes.length !== count) return result;
+    result.colors = colors;
+  }
+  return result;
+}
+
 // ─── Fallback layer parser — delegated by chart type ───────────
 function readChartParamsFromLayers(chartFrame) {
   var chartType = detectChartType(chartFrame);
   if (!chartType) return null;
   if (chartType === "pie") return readPieParamsFromLayers(chartFrame);
   return readAxisChartParamsFromLayers(chartFrame, chartType);
+}
+
+// Bar: numeric ticks and category names from the label groups. Vertical charts
+// keep the ticks in "Y Labels" (bottom → top) and categories in "X Labels"
+// (left → right); horizontal charts swap them: ticks in "X Labels" (left →
+// right), categories in "Y Labels" (top → bottom).
+function readBarAxisGroups(groups, orientation) {
+  var valueGroup = groups[orientation === "vertical" ? "Y Labels" : "X Labels"];
+  var categoryGroup = groups[orientation === "vertical" ? "X Labels" : "Y Labels"];
+  var out = { yValues: [], yUnit: "", yLabels: null, xLabels: [] };
+  if (valueGroup && "children" in valueGroup) {
+    var vTexts = [];
+    for (var i = 0; i < valueGroup.children.length; i++) {
+      var vc = valueGroup.children[i];
+      if (vc.type === "TEXT" && vc.characters.length > 0) vTexts.push(vc);
+    }
+    if (orientation === "vertical") vTexts.sort(function (a, b) { return b.y - a.y; });
+    else vTexts.sort(function (a, b) { return a.x - b.x; });
+    var chars = [];
+    for (var i = 0; i < vTexts.length; i++) chars.push(vTexts[i].characters);
+    var parsed = parseYLabelTexts(chars);
+    out.yValues = parsed.yValues;
+    out.yUnit = parsed.yUnit;
+    out.yLabels = parsed.yLabels;
+  }
+  if (categoryGroup && "children" in categoryGroup) {
+    var cTexts = [];
+    for (var i = 0; i < categoryGroup.children.length; i++) {
+      if (categoryGroup.children[i].type === "TEXT") cTexts.push(categoryGroup.children[i]);
+    }
+    if (orientation === "vertical") cTexts.sort(function (a, b) { return a.x - b.x; });
+    else cTexts.sort(function (a, b) { return a.y - b.y; });
+    for (var i = 0; i < cTexts.length; i++) out.xLabels.push(cTexts[i].characters);
+  }
+  return out;
 }
 
 function readAxisChartParamsFromLayers(chartFrame, chartType) {
@@ -513,6 +996,10 @@ function readAxisChartParamsFromLayers(chartFrame, chartType) {
   if (chartType === "line") {
     result.linesCount = 1;
     result.lineStyle = "smooth";
+    var lineLayers = chartSeriesNodes(chartFrame, "line");
+    if (lineLayers.length === 1 && !groups["Lines"]) {
+      result.lineStyle = detectCurveStyle(lineLayers[0], xLabels.length);
+    }
     if (groups["Lines"] && "children" in groups["Lines"]) {
       result.linesCount = groups["Lines"].children.length;
       if (result.linesCount < 1) result.linesCount = 1;
@@ -560,8 +1047,8 @@ function readAxisChartParamsFromLayers(chartFrame, chartType) {
     result.dense = false;
     result.barGap = 1;
     result.fillOpacity = 1;
-    if (groups["Bars"] && "children" in groups["Bars"]) {
-      var barRects = groups["Bars"].children;
+    var barRects = chartSeriesNodes(chartFrame, "bar");
+    if (barRects.length > 0) {
       if (barRects.length > 0 && barRects[0].fills && barRects[0].fills.length > 0) {
         if (barRects[0].fills[0].opacity !== undefined) result.fillOpacity = barRects[0].fills[0].opacity;
       }
@@ -580,6 +1067,20 @@ function readAxisChartParamsFromLayers(chartFrame, chartType) {
           if (Math.abs(barRects[bi].x - minLeft) < 2) atLeftCount++;
         }
         result.orientation = (atBottomCount >= atLeftCount) ? "vertical" : "horizontal";
+
+        // The orientation decides which label group holds the numeric ticks:
+        // vertical → "Y Labels", horizontal → "X Labels" (categories swap too).
+        var axes = readBarAxisGroups(groups, result.orientation);
+        if (axes.yValues.length < 2) {
+          // Ambiguous bar layout (e.g. a single bar): trust the labels instead.
+          var flippedOrientation = (result.orientation === "vertical") ? "horizontal" : "vertical";
+          var flipped = readBarAxisGroups(groups, flippedOrientation);
+          if (flipped.yValues.length >= 2) { axes = flipped; result.orientation = flippedOrientation; }
+        }
+        if (axes.yValues.length >= 2 || result.orientation === "horizontal") {
+          yValues = axes.yValues; yUnit = axes.yUnit; yLabels = axes.yLabels; xLabels = axes.xLabels;
+          result.yValues = yValues; result.yUnit = yUnit; result.yLabels = yLabels; result.xLabels = xLabels;
+        }
 
         // Cluster bars by primary-axis position. Bars at the same position = stacked together.
         var posKey = (result.orientation === "vertical") ? "x" : "y";
@@ -655,6 +1156,11 @@ function readAxisChartParamsFromLayers(chartFrame, chartType) {
   }
 
   if (yValues.length < 2) return null;
+
+  var seriesCount = (chartType === "line") ? result.linesCount
+    : (chartType === "area") ? result.areasCount : result.barsCount;
+  addLegendAndColorsFromLayers(result, chartFrame, chartType, groups, seriesCount);
+
   // Sort bottom → top, keeping each label attached to its own value.
   var pairs = [];
   for (var pi = 0; pi < result.yValues.length; pi++) {
@@ -687,8 +1193,10 @@ function readPieParamsFromLayers(chartFrame) {
   var segmentGap = 1;
   var values = [];
 
-  if (groups["Slices"] && "children" in groups["Slices"]) {
-    var slices = groups["Slices"].children;
+  // A one-segment pie leaves its single slice ungrouped, named "Slices".
+  var sliceList = chartSeriesNodes(chartFrame, "pie");
+  if (sliceList.length > 0) {
+    var slices = sliceList;
     segmentsCount = slices.length;
     if (segmentsCount < 1) segmentsCount = 5;
     var firstSlice = slices[0];
@@ -733,7 +1241,7 @@ function readPieParamsFromLayers(chartFrame) {
 
   if (segmentsCount < 1) return null;
 
-  return {
+  var recovered = {
     chartType: "pie",
     values: values,
     segmentsCount: segmentsCount,
@@ -745,16 +1253,19 @@ function readPieParamsFromLayers(chartFrame) {
     showTotal: showTotal,
     fillOpacity: fillOpacity
   };
+  return addLegendAndColorsFromLayers(recovered, chartFrame, "pie", groups, segmentsCount);
 }
 
 // ─── Shared: Selection notification ────────────────────────────
-function sendSelection() {
+// `reason` tells the UI why the update came: "recolor" refreshes the stored
+// chart data without resetting the tab or the form's button state.
+function sendSelection(reason) {
   var f = getSelectedFrame();
   if (f) {
-    lastSelectedFrameId = f.id;
+    lastSelectedFrame = f;
     var chartFrame = findChartFrame(f);
     var chartData = chartFrame ? readChartParams(chartFrame) : null;
-    figma.ui.postMessage({
+    var msg = {
       type: "selection",
       hasFrame: true,
       name: f.name,
@@ -762,8 +1273,149 @@ function sendSelection() {
       height: Math.round(f.height),
       hasChart: !!chartData,
       chartData: chartData
-    });
+    };
+    if (reason) msg.reason = reason;
+    figma.ui.postMessage(msg);
   }
+}
+
+// ─── Shared: Live recolor of the selected chart ────────────────
+// A color picked while a chart is selected is applied to that chart at once:
+// only the series paint (line stroke; area / bar / slice fill with its opacity
+// kept) and its legend marker change — data, stacking, angles, events and
+// layout stay as they are, nothing is regenerated. The area outline is a
+// neutral stroke, not the series color, so it is left alone. The pin is saved
+// into pluginData, so it survives a later regenerate, copy and paste.
+
+// Series index → the layers painted in that series' color.
+function seriesPaintTargets(chartFrame, chartType, params, count) {
+  var nodes = chartSeriesNodes(chartFrame, chartType);
+  var targets = [];
+  var i;
+  for (i = 0; i < count; i++) targets.push([]);
+  if (chartType === "bar") {
+    var colors = [];
+    for (i = 0; i < count; i++) {
+      var saved = params.colors && params.colors.length === count ? params.colors[i] : null;
+      colors.push(saved || (nodes[i] ? fillColorOf(nodes[i]) : PALETTE[0]));
+    }
+    var owner = seriesOfBars(nodes, count, colors);
+    for (i = 0; i < nodes.length; i++) if (owner[i] >= 0) targets[owner[i]].push(nodes[i]);
+    return targets;
+  }
+  if (chartType === "pie" && nodes.length !== count) {
+    var drawn = params.values ? drawnSegmentIndices(params.values, params.segmentGap) : [];
+    if (drawn.length !== nodes.length) return null;
+    for (i = 0; i < drawn.length; i++) targets[drawn[i]].push(nodes[i]);
+    return targets;
+  }
+  for (i = 0; i < count && i < nodes.length; i++) targets[i].push(nodes[i]);
+  return targets;
+}
+
+// How many series the selected chart actually draws.
+function drawnSeriesCount(chartFrame, chartType, params) {
+  var nodes = chartSeriesNodes(chartFrame, chartType);
+  if (chartType === "bar") {
+    var count = (params.colors && params.colors.length) ? params.colors.length
+      : (params.barMode === "normal" ? 1 : (parseInt(params.barsCount) || 1));
+    return Math.max(1, Math.min(count, nodes.length));
+  }
+  if (chartType === "pie") return params.segmentsCount || (params.values ? params.values.length : nodes.length);
+  return nodes.length;
+}
+
+var SERIES_WORD = { line: "line", area: "area", bar: "series", pie: "segment" };
+var CHART_TITLE = { line: "Line", area: "Area", bar: "Bar", pie: "Pie" };
+
+// Applies pins to the selected chart: every pinned series (its layers and its
+// legend marker) is repainted, unpinned series keep the color they have.
+// `update(pins, count)` edits the saved pins in place and returns an error text
+// to abort. customColors records whether the UI picker is on for this chart,
+// so "Get values from chart" and paste can show it the way it was left.
+// `expectedType` (from the UI tab) guards against repainting a chart of
+// another type. Returns true when applied, otherwise a short reason.
+function applyColorsToSelectedChart(update, customColors, expectedType) {
+  var target = getSelectedFrame();
+  if (!target) return "Select the chart to apply the color";
+  var chartFrame = findChartFrame(target);
+  if (!chartFrame) return "No " + (expectedType ? CHART_TITLE[expectedType] + " " : "") + "chart in the selected frame";
+  var chartType = detectChartType(chartFrame);
+  if (!chartType) return "No chart in the selected frame";
+  if (expectedType && expectedType !== chartType) {
+    return "The selected chart is a " + CHART_TITLE[chartType] + " chart";
+  }
+  var nodes = chartSeriesNodes(chartFrame, chartType);
+  if (!nodes.length) return "Could not find the chart " + (chartType === "pie" ? "slices" : chartType + "s");
+  var params = readChartParams(chartFrame) || {};
+  var count = drawnSeriesCount(chartFrame, chartType, params);
+  var targets = seriesPaintTargets(chartFrame, chartType, params, count);
+  if (!targets) return "Could not match the slices to the segments";
+
+  var markers = chartLegendMarkers(chartFrame, chartType);
+  var colors = [];
+  var i;
+  for (i = 0; i < count; i++) {
+    var saved = params.colors && params.colors.length === count ? params.colors[i] : null;
+    var fallback = targets[i].length ? seriesColorOf(targets[i][0], chartType)
+      : (markers[i] ? fillColorOf(markers[i]) : PALETTE[i % PALETTE.length]);
+    colors.push(saved || fallback);
+  }
+  var pinsKey = PINS_KEY[chartType];
+  var pins = normalizeSeriesColors(params[pinsKey], count);
+  var problem = update(pins, count, chartType);
+  if (typeof problem === "string") return problem;
+
+  for (i = 0; i < count; i++) {
+    // "Auto" just unpins the series: it keeps the color it has until regenerated.
+    if (pins[i] === null) continue;
+    var c = colorOfHex(pins[i]);
+    if (colorToHex(colors[i]) !== pins[i]) {
+      for (var t = 0; t < targets[i].length; t++) {
+        var node = targets[i][t];
+        if (chartType === "line") {
+          node.strokes = [{ type: "SOLID", color: c }];
+        } else {
+          var old = node.fills && node.fills[0];
+          var opacity = (old && old.opacity !== undefined) ? old.opacity : 1;
+          node.fills = [{ type: "SOLID", color: c, opacity: opacity }];
+        }
+      }
+      for (var m = 0; m < markers.length; m++) {
+        // Older normal-mode bar charts drew one dot per requested series.
+        if (m === i || (chartType === "bar" && m % count === i)) markers[m].fills = [{ type: "SOLID", color: c }];
+      }
+    }
+    colors[i] = c;
+  }
+
+  params.colors = colors;
+  params[pinsKey] = pins;
+  params.customColors = !!customColors;
+  chartFrame.setPluginData("chartParams", JSON.stringify(params));
+  sendSelection("recolor");
+  return true;
+}
+
+// One series picked in the UI.
+function recolorSelectedChart(index, hex, expectedType) {
+  index = parseInt(index);
+  return applyColorsToSelectedChart(function (pins, count, chartType) {
+    if (isNaN(index) || index < 0 || index >= count) {
+      var word = SERIES_WORD[chartType];
+      return "The chart has only " + count + " " + word + (count === 1 || word === "series" ? "" : "s");
+    }
+    pins[index] = normalizeHex(hex);
+  }, true, expectedType);
+}
+
+// The picker was switched on (rows = the chart's colors, now pinned) or off
+// (every series unpinned, colors left as they are).
+function saveColorsToSelectedChart(seriesColors, customColors, expectedType) {
+  return applyColorsToSelectedChart(function (pins, count) {
+    var next = customColors ? normalizeSeriesColors(seriesColors, count) : normalizeSeriesColors([], count);
+    for (var i = 0; i < count; i++) pins[i] = next[i];
+  }, customColors, expectedType);
 }
 
 // ─── Shared: Container creation / replacement ──────────────────
@@ -776,6 +1428,8 @@ function prepareContainer(chartName, replaceMode, defaultW, defaultH) {
   var reuseContainer = false;
   var replacedChild = false;
   var oldX = 0, oldY = 0;
+  var nestedParent = null;
+  var nestedIndex = -1;
 
   if (target) {
     var existingChart = findChartFrame(target);
@@ -790,9 +1444,16 @@ function prepareContainer(chartName, replaceMode, defaultW, defaultH) {
         container.name = chartName;
         reuseContainer = true;
       } else {
-        // Chart is a child — remove it, position new one in its place
+        // Chart is a descendant — remove it, position new one in its place.
+        // A chart nested deeper than a direct child is replaced where it
+        // lives: same parent, same layer index, same size.
         w = target.width; h = target.height;
         oldX = existingChart.x; oldY = existingChart.y;
+        if (existingChart.parent && existingChart.parent.id !== target.id) {
+          nestedParent = existingChart.parent;
+          nestedIndex = nestedParent.children.indexOf(existingChart);
+          w = existingChart.width; h = existingChart.height;
+        }
         existingChart.remove();
         replacedChild = true;
       }
@@ -800,8 +1461,10 @@ function prepareContainer(chartName, replaceMode, defaultW, defaultH) {
   }
 
   if (!container) {
-    w = target ? target.width : defaultW;
-    h = target ? target.height : defaultH;
+    if (!nestedParent) {
+      w = target ? target.width : defaultW;
+      h = target ? target.height : defaultH;
+    }
     container = figma.createFrame();
     container.name = chartName;
     container.resize(w, h);
@@ -809,13 +1472,19 @@ function prepareContainer(chartName, replaceMode, defaultW, defaultH) {
     container.clipsContent = true;
   }
 
-  return { container: container, target: target, w: w, h: h, reuseContainer: reuseContainer, replacedChild: replacedChild, oldX: oldX, oldY: oldY };
+  return { container: container, target: target, w: w, h: h, reuseContainer: reuseContainer, replacedChild: replacedChild, oldX: oldX, oldY: oldY, nestedParent: nestedParent, nestedIndex: nestedIndex };
 }
 
 // ─── Shared: Insert container and notify ───────────────────────
 function insertAndNotify(ctx, chartTypeName) {
   if (ctx.reuseContainer) {
     figma.viewport.scrollAndZoomIntoView([ctx.container]);
+    figma.notify("Chart regenerated!");
+  } else if (ctx.replacedChild && ctx.target && ctx.nestedParent) {
+    var np = ctx.nestedParent;
+    np.insertChild(Math.max(0, Math.min(ctx.nestedIndex, np.children.length)), ctx.container);
+    ctx.container.x = ctx.oldX; ctx.container.y = ctx.oldY;
+    figma.viewport.scrollAndZoomIntoView([ctx.target]);
     figma.notify("Chart regenerated!");
   } else if (ctx.replacedChild && ctx.target) {
     ctx.target.appendChild(ctx.container);
@@ -1446,11 +2115,14 @@ function generateLineChart(msg, exactData) {
     }
   }
 
+  // Pinned colors from the picker; a paste carries them along in exactData.
+  var seriesPins = normalizeSeriesColors(msg.lineColors, linesCount);
+  var customColors = resolveCustomColors(msg, seriesPins);
   var distinctColors;
   if (exactData && exactData.colors && exactData.colors.length === linesCount) {
     distinctColors = exactData.colors;
   } else {
-    distinctColors = selectDistinctColors(linesCount);
+    distinctColors = resolveSeriesColors(linesCount, seriesPins, null, false);
   }
 
   var topEventSegments = topEvent
@@ -1487,11 +2159,12 @@ function generateLineChart(msg, exactData) {
   }
 
   var chartParams = {
+    chartType: "line",
     yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
     linesCount: linesCount, lineStyle: lineStyle,
     topEvent: topEvent, bottomEvent: bottomEvent,
     showLegend: showLegend, legendAlign: legendAlign, legendLabels: legendLabels,
-    allSeries: allSeries, colors: distinctColors,
+    allSeries: allSeries, colors: distinctColors, lineColors: seriesPins, customColors: customColors,
     topEventSegments: topEventSegments, bottomEventSegments: bottomEventSegments
   };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
@@ -1629,11 +2302,14 @@ function generateAreaChart(msg, exactData) {
     }
   }
 
+  // Pinned colors from the picker; a paste carries them along in exactData.
+  var seriesPins = normalizeSeriesColors(msg.areaColors, areasCount);
+  var customColors = resolveCustomColors(msg, seriesPins);
   var distinctColors;
   if (exactData && exactData.colors && exactData.colors.length === areasCount) {
     distinctColors = exactData.colors;
   } else {
-    distinctColors = selectDistinctColors(areasCount);
+    distinctColors = resolveSeriesColors(areasCount, seriesPins, null, false);
   }
 
   var topEventSegments = topEvent
@@ -1670,12 +2346,13 @@ function generateAreaChart(msg, exactData) {
   }
 
   var chartParams = {
+    chartType: "area",
     yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
     areasCount: areasCount, areaStyle: areaStyle, areaMode: areaMode,
     fillHeight: fillHeight, fillOpacity: fillOpacity,
     topEvent: topEvent, bottomEvent: bottomEvent,
     showLegend: showLegend, legendAlign: legendAlign, legendLabels: legendLabels,
-    allSeries: allSeries, colors: distinctColors,
+    allSeries: allSeries, colors: distinctColors, areaColors: seriesPins, customColors: customColors,
     topEventSegments: topEventSegments, bottomEventSegments: bottomEventSegments
   };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
@@ -1983,11 +2660,14 @@ function generateBarChart(msg, exactData) {
     }
   }
 
+  // Pinned colors from the picker; a paste carries them along in exactData.
+  var seriesPins = normalizeSeriesColors(msg.barColors, barsCount);
+  var customColors = resolveCustomColors(msg, seriesPins);
   var distinctColors;
   if (exactData && exactData.colors && exactData.colors.length === barsCount) {
     distinctColors = exactData.colors;
   } else {
-    distinctColors = selectDistinctColors(barsCount);
+    distinctColors = resolveSeriesColors(barsCount, seriesPins, null, false);
   }
 
   var topEventSegments = topEvent
@@ -2038,12 +2718,13 @@ function generateBarChart(msg, exactData) {
   }
 
   var chartParams = {
+    chartType: "bar",
     yValues: yValues, yUnit: yUnit, yLabels: yLabels, xLabels: xLabels,
     barsCount: barsCount, orientation: orientation, barMode: barMode,
     dense: dense, barGap: barGap, fillOpacity: fillOpacity,
     topEvent: topEvent, bottomEvent: bottomEvent,
     showLegend: showLegend, legendAlign: legendAlign, legendLabels: legendLabels,
-    allSeries: allSeries, colors: distinctColors,
+    allSeries: allSeries, colors: distinctColors, barColors: seriesPins, customColors: customColors,
     topEventSegments: topEventSegments, bottomEventSegments: bottomEventSegments
   };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
@@ -2209,11 +2890,14 @@ function generatePieChart(msg, exactData) {
   var innerR = (pieStyle === "donut") ? outerR * (innerRadiusPct / 100) : 0;
   var cr = (pieStyle === "donut") ? cornerRadius : 0;
 
+  // Pinned colors from the picker; a paste carries them along in exactData.
+  var seriesPins = normalizeSeriesColors(msg.segmentColors, segmentsCount);
+  var customColors = resolveCustomColors(msg, seriesPins);
   var distinctColors;
   if (exactData && exactData.colors && exactData.colors.length === segmentsCount) {
     distinctColors = exactData.colors;
   } else {
-    distinctColors = selectDistinctColors(segmentsCount);
+    distinctColors = resolveSeriesColors(segmentsCount, seriesPins, null, true);
   }
 
   var sliceNodes = drawSlices(container, cx, cy, outerR, innerR, values, distinctColors, fillOpacity, cr, segmentGap);
@@ -2236,11 +2920,12 @@ function generatePieChart(msg, exactData) {
   }
 
   var chartParams = {
+    chartType: "pie",
     values: values, segmentsCount: segmentsCount, pieStyle: pieStyle,
     innerRadiusPct: innerRadiusPct, cornerRadius: cornerRadius, segmentGap: segmentGap,
     showLabels: showLabels, showTotal: showTotal, fillOpacity: fillOpacity,
     showLegend: showLegend, legendAlign: legendAlign, legendLabels: legendLabels,
-    colors: distinctColors
+    colors: distinctColors, segmentColors: seriesPins, customColors: customColors
   };
   container.setPluginData("chartParams", JSON.stringify(chartParams));
   insertAndNotify(ctx, "Pie");
@@ -2269,6 +2954,43 @@ figma.ui.onmessage = async function (msg) {
   }
   if (msg.type === "notify") {
     figma.notify(msg.message);
+    return;
+  }
+  if (msg.type === "get-palette") {
+    figma.ui.postMessage({ type: "palette", colors: PALETTE_HEX });
+    return;
+  }
+  if (msg.type === "suggest-colors") {
+    // The picker was switched on or "Auto" was pressed: propose concrete colors
+    // for the requested rows, chosen the same way generation would (Pie also
+    // keeps touching slices apart), around the colors already pinned.
+    var count = Math.max(1, Math.min(20, parseInt(msg.count) || 1));
+    var pins = msg.seriesColors || msg.lineColors || msg.areaColors || msg.barColors || msg.segmentColors;
+    var ring = (msg.chartType === "pie") || (!msg.chartType && !!msg.segmentColors);
+    var suggested = resolveSeriesColors(count, pins, msg.avoid, ring);
+    var hexes = [];
+    for (var si = 0; si < suggested.length; si++) hexes.push(colorToHex(suggested[si]));
+    figma.ui.postMessage({ type: "suggested-colors", requestId: msg.requestId, chartType: msg.chartType, colors: hexes });
+    return;
+  }
+  if (msg.type === "recolor" || msg.type === "save-series-colors" || msg.type === "save-line-colors" ||
+      msg.type === "save-area-colors" || msg.type === "save-bar-colors" || msg.type === "save-segment-colors") {
+    var outcome;
+    try {
+      if (msg.type === "recolor") {
+        outcome = recolorSelectedChart(msg.index, msg.color, msg.chartType);
+      } else {
+        var saved = msg.seriesColors || msg.lineColors || msg.areaColors || msg.barColors || msg.segmentColors || [];
+        outcome = saveColorsToSelectedChart(saved, !!msg.customColors, msg.chartType);
+      }
+    } catch (e) {
+      outcome = "Could not apply the color: " + (e && e.message ? e.message : String(e));
+    }
+    if (outcome !== true) {
+      var reason = outcome || "Select the chart to apply the color";
+      figma.notify(reason, { error: true });
+      figma.ui.postMessage({ type: "recolor-failed", index: msg.index, chartType: msg.chartType, message: reason });
+    }
     return;
   }
   if (msg.type === "generate") {

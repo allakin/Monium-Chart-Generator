@@ -103,6 +103,23 @@
     }
     .clipboard-box .clear-btn:hover { color: #1A1A1A; }
 
+    /* Loading state: the box opens with a spinner and only then swaps in the
+       summary, so the content change is visible and it is clear what was copied. */
+    .clipboard-box .spinner {
+      display: none;
+      width: 11px;
+      height: 11px;
+      flex-shrink: 0;
+      border: 1.5px solid #EBD6A6;
+      border-top-color: #7A5A0F;
+      border-radius: 50%;
+      animation: clipboard-spin 0.6s linear infinite;
+    }
+    .clipboard-box.loading .spinner { display: block; }
+    .clipboard-box.loading .summary { opacity: 0.7; }
+    .clipboard-box.loading .clear-btn { visibility: hidden; }
+    @keyframes clipboard-spin { to { transform: rotate(360deg); } }
+
     .btn-paste {
       width: 100%;
       margin-top: 8px;
@@ -189,6 +206,128 @@
       vertical-align: middle;
     }
 
+    /* Line color picker: one row per line, palette grid opens under the row. */
+    .color-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border: 1.5px solid #E0E0E0;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .color-row:hover { border-color: #C8C8CC; }
+    .color-row.open { border-color: #4D7CFE; }
+    .color-swatch {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      border-radius: 4px;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+    }
+    /* Auto without a known color yet: diagonal stripes instead of a fill. */
+    .color-swatch.auto-empty {
+      background: repeating-linear-gradient(45deg, #E0E0E0 0 3px, #F7F8FA 3px 6px);
+    }
+    .color-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #1A1A1A;
+    }
+    .color-value {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #808080;
+      font-variant-numeric: tabular-nums;
+    }
+    .color-reset {
+      flex-shrink: 0;
+      border: none;
+      background: transparent;
+      color: #808080;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .color-reset:hover { color: #1A1A1A; }
+    .palette-panel {
+      padding: 8px;
+      border: 1.5px solid #E0E0E0;
+      border-radius: 6px;
+      background: #fff;
+    }
+    .palette-auto {
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 5px 0;
+      border: none;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      color: #808080;
+      background: #EEEEF0;
+      cursor: pointer;
+    }
+    .palette-auto:hover { background: #E0E0E0; }
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 4px;
+    }
+    .palette-color {
+      position: relative;
+      aspect-ratio: 1;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 0;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+      transition: transform 0.1s;
+    }
+    .palette-color:hover { transform: scale(1.15); }
+    .palette-color.selected { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #1A1A1A; }
+    /* Already pinned on another line — still selectable, just marked. */
+    .palette-color.used::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 4px;
+      height: 4px;
+      margin: -2px 0 0 -2px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+    }
+    .palette-empty { font-size: 11px; color: #808080; }
+    .color-hint { margin-top: 6px; font-size: 11px; color: #808080; }
+    .color-hint.error { color: #E53935; }
+    .palette-custom {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      background: #F7F8FA;
+      box-shadow: inset 0 0 0 1.5px #1A1A1A;
+      font-size: 11px;
+      color: #1A1A1A;
+    }
+
     .btn {
       width: 100%;
       margin-top: 16px;
@@ -236,6 +375,7 @@
 
   <div class="clipboard-box" id="clipboardBox">
     <div class="row">
+      <span class="spinner"></span>
       <span class="summary" id="clipboardSummary">Chart copied</span>
       <button class="clear-btn" onclick="clearCopy()" title="Clear clipboard">×</button>
     </div>
@@ -260,6 +400,21 @@
   <div class="field">
     <label>Lines count (1–20)</label>
     <input type="number" id="linesInput" value="2" min="1" max="20">
+  </div>
+
+  <div class="field">
+    <label>Line colors</label>
+    <div class="checkbox-group">
+      <label class="checkbox-row">
+        <input type="checkbox" id="customColorsCheck"> Custom line colors
+      </label>
+    </div>
+  </div>
+
+  <div class="field" id="lineColorsField" style="display: none;">
+    <label>Click a line to pick its color from the palette</label>
+    <div class="color-list" id="lineColorsList"></div>
+    <div class="color-hint" id="lineColorsHint"></div>
   </div>
 
   <div class="field">
@@ -320,7 +475,7 @@
 
   <button class="btn btn-primary" id="insertBtn" onclick="generate()">Insert chart</button>
 
-  <div class="footer">Monium Design System v2.4</div>
+  <div class="footer">Monium Design System v2.5</div>
 
   <script>
     var DEFAULTS = {
@@ -334,6 +489,8 @@
     var replaceMode = false;
     var copiedChart = null;
     var pendingPasteData = null;
+    var copyLoaderTimer = null;
+    var COPY_LOADER_MS = 450;
 
     function setInsertEnabled(enabled) {
       document.getElementById('insertBtn').disabled = !enabled;
@@ -414,6 +571,7 @@
       // missing positions based on the current series count. Existing labels are
       // preserved (sync only appends/truncates).
       syncLegendLabelsToLinesCount();
+      renderLineColors();
       resizeUI();
     });
 
@@ -436,7 +594,421 @@
 
     // 'change' (not 'input'): fires after value is committed (blur, Enter, or spinner click),
     // so typing "15" digit-by-digit doesn't truncate labels at the intermediate "1" state.
-    document.getElementById('linesInput').addEventListener('change', syncLegendLabelsToLinesCount);
+    document.getElementById('linesInput').addEventListener('change', function () {
+      syncLegendLabelsToLinesCount();
+      var before = lineColorState.length;
+      syncLineColorsToLinesCount();
+      // New lines added while the picker is on get a concrete color right away.
+      if (document.getElementById('customColorsCheck').checked && lineColorState.length > before) {
+        var added = [];
+        for (var i = before; i < lineColorState.length; i++) added.push(i);
+        fillUnpinnedColors(added);
+      }
+      renderLineColors();
+    });
+
+    // ═══════════════════════════════════════════════
+    //  Line color picker
+    // ═══════════════════════════════════════════════
+    // The palette comes from code.js (the same list the chart is generated
+    // from), requested once on load. lineColorState[i] is the pinned hex of
+    // line i or null for Auto; autoColorPreview[i] is the color the line
+    // currently has on the chart, shown for Auto rows.
+    var paletteHex = [];
+    var paletteDisplay = []; // paletteHex sorted by hue for the grid
+    var lineColorState = [];
+    var autoColorPreview = [];
+    var openColorRow = -1;
+    var suggestRequestId = 0;
+    var pendingSuggestSlots = [];
+    var pendingSuggestLive = false;
+
+    function getLinesCount() {
+      return Math.max(1, Math.min(20, parseInt(document.getElementById('linesInput').value) || 1));
+    }
+
+    function rgbToHex(c) {
+      if (!c) return null;
+      var hex = '#';
+      [c.r, c.g, c.b].forEach(function (v) {
+        var n = Math.max(0, Math.min(255, Math.round(v * 255)));
+        hex += (n < 16 ? '0' : '') + n.toString(16).toUpperCase();
+      });
+      return hex;
+    }
+
+    function normalizeHex(hex) {
+      return (typeof hex === 'string' && /^#[0-9a-f]{6}$/i.test(hex.trim())) ? hex.trim().toUpperCase() : null;
+    }
+
+    function syncLineColorsToLinesCount() {
+      var n = getLinesCount();
+      if (lineColorState.length > n) lineColorState = lineColorState.slice(0, n);
+      while (lineColorState.length < n) lineColorState.push(null);
+      if (openColorRow >= n) openColorRow = -1;
+    }
+
+    // A user's pick for one line. When a chart is selected the color is applied
+    // to it at once (stroke + legend marker), without regenerating the chart.
+    function setLineColor(index, hex) {
+      syncLineColorsToLinesCount();
+      if (index < 0 || index >= lineColorState.length) return;
+      lineColorState[index] = normalizeHex(hex);
+      renderLineColors();
+      recolorSelectedChart(index);
+    }
+
+    // Series the selected chart actually draws; rows past it (the form asks for
+    // more than the chart has) only apply on "Insert chart".
+    function selectedChartSeries() {
+      if (!storedChartData) return 0;
+      if (storedChartData.colors && storedChartData.colors.length) return storedChartData.colors.length;
+      return storedChartData.linesCount || 0;
+    }
+
+    function recolorSelectedChart(index) {
+      if (!storedChartData || !document.getElementById('customColorsCheck').checked) return;
+      if (index >= selectedChartSeries()) return;
+      var hex = lineColorState[index];
+      if (hex) autoColorPreview[index] = hex;
+      recolorError = '';
+      updateLineColorsHint();
+      parent.postMessage({ pluginMessage: { type: 'recolor', index: index, color: hex } }, '*');
+    }
+
+    // "Auto" button: a fresh generated color for this line — different from the
+    // one it has now and apart from the other lines, chosen by code.js the same
+    // way generation picks colors.
+    function generateLineColor(index) {
+      syncLineColorsToLinesCount();
+      if (index < 0 || index >= lineColorState.length) return;
+      var current = lineColorState[index] || normalizeHex(autoColorPreview[index]);
+      var others = lineColorState.slice();
+      others[index] = null;
+      suggestRequestId++;
+      pendingSuggestSlots = [index];
+      pendingSuggestLive = true;
+      parent.postMessage({ pluginMessage: {
+        type: 'suggest-colors',
+        requestId: suggestRequestId,
+        count: lineColorState.length,
+        lineColors: others,
+        avoid: current ? [current] : []
+      }}, '*');
+    }
+
+    // Tells the user where a pick lands: straight onto the selected chart, or
+    // into the form until "Insert chart". A failed recolor shows its reason.
+    var recolorError = '';
+    function updateLineColorsHint() {
+      var hint = document.getElementById('lineColorsHint');
+      if (recolorError) {
+        hint.className = 'color-hint error';
+        hint.textContent = recolorError;
+      } else {
+        hint.className = 'color-hint';
+        hint.textContent = storedChartData
+          ? 'Colors apply to the selected chart right away'
+          : 'Colors apply when you insert the chart';
+      }
+    }
+
+    // Clicks inside the picker are marked here (the list itself is never
+    // re-rendered, so it sees the click even after a row was rebuilt); any
+    // other click, or Esc, closes an open palette.
+    var clickInsidePicker = false;
+    document.getElementById('lineColorsList').addEventListener('click', function () {
+      clickInsidePicker = true;
+    });
+    function closeColorPalette() {
+      if (openColorRow === -1) return;
+      openColorRow = -1;
+      renderLineColors();
+    }
+    document.addEventListener('click', function () {
+      if (clickInsidePicker) { clickInsidePicker = false; return; }
+      closeColorPalette();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e && e.key === 'Escape') closeColorPalette();
+    });
+
+    // Text next to a row's swatch: where the color comes from, then its hex.
+    function colorValueText(hex) {
+      if (!hex) return 'Auto';
+      if (!paletteHex.length) return hex;
+      return (isPaletteColor(hex) ? 'Palette · ' : 'Custom · ') + hex;
+    }
+
+    // Grid order: by hue around the color wheel starting from red, lighter
+    // before darker within a similar hue; near-grays go last, light → dark.
+    // Display only — generation keeps the palette's own order.
+    function hexToHsl(hex) {
+      var r = parseInt(hex.slice(1, 3), 16) / 255;
+      var g = parseInt(hex.slice(3, 5), 16) / 255;
+      var b = parseInt(hex.slice(5, 7), 16) / 255;
+      var max = Math.max(r, g, b), min = Math.min(r, g, b);
+      var l = (max + min) / 2;
+      var d = max - min;
+      var h = 0, sat = 0;
+      if (d > 0) {
+        sat = d / (1 - Math.abs(2 * l - 1));
+        if (max === r) h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      return { h: h, s: sat, l: l };
+    }
+
+    var GRAY_SATURATION = 0.2;
+    function sortPaletteByHue(hexes) {
+      return hexes.slice().sort(function (a, b) {
+        var ha = hexToHsl(a), hb = hexToHsl(b);
+        var grayA = ha.s < GRAY_SATURATION, grayB = hb.s < GRAY_SATURATION;
+        if (grayA !== grayB) return grayA ? 1 : -1;
+        if (grayA) return hb.l - ha.l;
+        // Start the wheel just below red so pinks/reds (≈345°+) open the grid.
+        var keyA = (ha.h + 15) % 360, keyB = (hb.h + 15) % 360;
+        if (Math.abs(keyA - keyB) > 0.5) return keyA - keyB;
+        return hb.l - ha.l;
+      });
+    }
+
+    function isPaletteColor(hex) {
+      return paletteHex.indexOf(hex) !== -1;
+    }
+
+    // Gives the listed Auto rows a concrete color: the one the line has on the
+    // chart right now when it is known and not taken by another row, otherwise
+    // a suggestion from code.js picked exactly like generation would pick it.
+    function fillUnpinnedColors(indices) {
+      syncLineColorsToLinesCount();
+      var missing = [];
+      indices.forEach(function (i) {
+        if (i < 0 || i >= lineColorState.length || lineColorState[i] !== null) return;
+        var current = normalizeHex(autoColorPreview[i]);
+        if (current && lineColorState.indexOf(current) === -1) lineColorState[i] = current;
+        else missing.push(i);
+      });
+      if (missing.length) {
+        suggestRequestId++;
+        pendingSuggestSlots = missing;
+        pendingSuggestLive = false;
+        parent.postMessage({ pluginMessage: {
+          type: 'suggest-colors',
+          requestId: suggestRequestId,
+          count: lineColorState.length,
+          lineColors: lineColorState.slice()
+        }}, '*');
+      }
+      renderLineColors();
+    }
+
+    function applySuggestedColors(msg) {
+      if (msg.requestId !== suggestRequestId) return; // a newer request superseded it
+      var colors = msg.colors || [];
+      var live = pendingSuggestLive;
+      var filled = [];
+      pendingSuggestSlots.forEach(function (i) {
+        // A filled-in Auto row only takes the suggestion if still empty; the
+        // "Auto" button asked for this exact row, so it always takes it.
+        if (i < lineColorState.length && (live || lineColorState[i] === null)) {
+          lineColorState[i] = normalizeHex(colors[i]);
+          filled.push(i);
+        }
+      });
+      pendingSuggestSlots = [];
+      pendingSuggestLive = false;
+      renderLineColors();
+      if (live) filled.forEach(recolorSelectedChart);
+    }
+
+    function toggleColorRow(index) {
+      openColorRow = (openColorRow === index) ? -1 : index;
+      renderLineColors();
+    }
+
+    function lineDisplayName(index) {
+      var name = 'Line ' + (index + 1);
+      if (document.getElementById('showLegendCheck').checked) {
+        var labels = document.getElementById('legendInput').value.split(',')
+          .map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+        if (labels[index]) name += ' · ' + labels[index];
+      }
+      return name;
+    }
+
+    // What generate() sends: pins only while "Custom line colors" is on.
+    function currentLineColors() {
+      syncLineColorsToLinesCount();
+      if (!document.getElementById('customColorsCheck').checked) {
+        return lineColorState.map(function () { return null; });
+      }
+      return lineColorState.slice();
+    }
+
+    function updateLineColorsVisibility() {
+      var on = document.getElementById('customColorsCheck').checked;
+      document.getElementById('lineColorsField').style.display = on ? 'block' : 'none';
+    }
+
+    function buildPalettePanel(index) {
+      var panel = document.createElement('div');
+      panel.className = 'palette-panel';
+
+      var auto = document.createElement('button');
+      auto.type = 'button';
+      auto.className = 'palette-auto';
+      auto.textContent = 'Auto — generate a new color';
+      auto.addEventListener('click', function () {
+        openColorRow = -1;
+        renderLineColors();
+        generateLineColor(index);
+      });
+      panel.appendChild(auto);
+
+      // A pinned color outside the palette (e.g. from an older palette) has no
+      // swatch in the grid — show it on its own so the current choice stays visible.
+      var current = lineColorState[index];
+      if (current && paletteHex.length && !isPaletteColor(current)) {
+        var custom = document.createElement('div');
+        custom.className = 'palette-custom';
+        var csw = document.createElement('span');
+        csw.className = 'color-swatch';
+        csw.style.background = current;
+        custom.appendChild(csw);
+        var ctext = document.createElement('span');
+        ctext.textContent = current + ' · not in the palette';
+        custom.appendChild(ctext);
+        panel.appendChild(custom);
+      }
+
+      if (!paletteHex.length) {
+        var empty = document.createElement('div');
+        empty.className = 'palette-empty';
+        empty.textContent = 'Palette is loading…';
+        panel.appendChild(empty);
+        return panel;
+      }
+
+      var grid = document.createElement('div');
+      grid.className = 'palette-grid';
+      paletteDisplay.forEach(function (hex) {
+        var sw = document.createElement('button');
+        sw.type = 'button';
+        var cls = 'palette-color';
+        if (lineColorState[index] === hex) cls += ' selected';
+        else if (lineColorState.indexOf(hex) !== -1) cls += ' used';
+        sw.className = cls;
+        sw.style.background = hex;
+        sw.title = hex;
+        sw.addEventListener('click', function () {
+          openColorRow = -1; // a pick closes the palette
+          setLineColor(index, hex);
+        });
+        grid.appendChild(sw);
+      });
+      panel.appendChild(grid);
+      return panel;
+    }
+
+    function renderLineColors() {
+      syncLineColorsToLinesCount();
+      var list = document.getElementById('lineColorsList');
+      list.innerHTML = '';
+      updateLineColorsHint();
+      if (!document.getElementById('customColorsCheck').checked) return;
+
+      lineColorState.forEach(function (pinned, i) {
+        var shown = pinned || autoColorPreview[i] || null;
+
+        var row = document.createElement('div');
+        row.className = 'color-row' + (openColorRow === i ? ' open' : '');
+        row.addEventListener('click', function () { toggleColorRow(i); });
+
+        var sw = document.createElement('span');
+        sw.className = 'color-swatch' + (shown ? '' : ' auto-empty');
+        if (shown) sw.style.background = shown;
+        row.appendChild(sw);
+
+        var name = document.createElement('span');
+        name.className = 'color-name';
+        name.textContent = lineDisplayName(i);
+        row.appendChild(name);
+
+        var value = document.createElement('span');
+        value.className = 'color-value';
+        value.textContent = colorValueText(pinned);
+        if (pinned && paletteHex.length) {
+          value.title = isPaletteColor(pinned) ? 'Color from the palette' : 'Not in the palette';
+        }
+        row.appendChild(value);
+
+        if (pinned) {
+          var reset = document.createElement('button');
+          reset.type = 'button';
+          reset.className = 'color-reset';
+          reset.title = 'Unpin: the line gets a new generated color on regenerate';
+          reset.textContent = '×';
+          reset.addEventListener('click', function (e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            setLineColor(i, null);
+          });
+          row.appendChild(reset);
+        }
+
+        list.appendChild(row);
+        if (openColorRow === i) list.appendChild(buildPalettePanel(i));
+      });
+    }
+
+    // Restores the picker from a chart's saved params (Get values / paste).
+    function populateLineColors(d) {
+      var n = d.linesCount || 2;
+      var saved = d.lineColors || [];
+      lineColorState = [];
+      autoColorPreview = [];
+      for (var i = 0; i < n; i++) {
+        lineColorState.push(normalizeHex(saved[i]));
+        autoColorPreview.push(d.colors && d.colors[i] ? rgbToHex(d.colors[i]) : null);
+      }
+      openColorRow = -1;
+      document.getElementById('customColorsCheck').checked = (d.customColors !== undefined)
+        ? !!d.customColors
+        : lineColorState.some(function (c) { return c !== null; });
+      updateLineColorsVisibility();
+      renderLineColors();
+    }
+
+    document.getElementById('customColorsCheck').addEventListener('change', function () {
+      updateLineColorsVisibility();
+      var on = document.getElementById('customColorsCheck').checked;
+      if (on) {
+        // Switching the picker on shows real colors at once instead of "Auto".
+        // With a chart selected, the rows become exactly that chart's colors.
+        syncLineColorsToLinesCount();
+        if (storedChartData) {
+          lineColorState = lineColorState.map(function (_, i) { return normalizeHex(autoColorPreview[i]); });
+        }
+        fillUnpinnedColors(lineColorState.map(function (_, i) { return i; }));
+      } else {
+        renderLineColors();
+      }
+      // Remember the picker state on the selected chart, so "Get values from
+      // chart" and paste bring it back. Its colors do not change.
+      if (storedChartData) {
+        recolorError = '';
+        parent.postMessage({ pluginMessage: {
+          type: 'save-line-colors',
+          customColors: on,
+          lineColors: on ? lineColorState.slice() : []
+        }}, '*');
+      }
+      resizeUI();
+    });
+    document.getElementById('legendInput').addEventListener('input', renderLineColors);
 
     function hideRegenError() {
       document.getElementById('regenError').style.display = 'none';
@@ -450,10 +1022,28 @@
         return;
       }
       copiedChart = JSON.parse(JSON.stringify(storedChartData));
-      updateClipboardUI();
+      // Show the clipboard box in a loading state first: copying is instant, but
+      // without the pause the box swaps its contents unnoticed and it is unclear
+      // which chart data is now on the clipboard.
+      showClipboardLoading();
       resizeUI();
-      var n = copiedChart.linesCount || 0;
-      parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — ' + n + ' line' + (n === 1 ? '' : 's') + ' ready to paste' } }, '*');
+      if (copyLoaderTimer) clearTimeout(copyLoaderTimer);
+      copyLoaderTimer = setTimeout(function () {
+        copyLoaderTimer = null;
+        updateClipboardUI();
+        resizeUI();
+        var n = copiedChart.linesCount || 0;
+        parent.postMessage({ pluginMessage: { type: 'notify', message: 'Chart copied — ' + n + ' line' + (n === 1 ? '' : 's') + ' ready to paste' } }, '*');
+      }, COPY_LOADER_MS);
+    }
+
+    function showClipboardLoading() {
+      var box = document.getElementById('clipboardBox');
+      box.classList.add('loading');
+      box.style.display = 'block';
+      document.getElementById('clipboardSummary').textContent = 'Reading chart data…';
+      document.getElementById('copyBtn').disabled = true;
+      document.getElementById('pasteBtn').disabled = true;
     }
 
     function pasteChart() {
@@ -469,13 +1059,20 @@
     }
 
     function clearCopy() {
+      if (copyLoaderTimer) { clearTimeout(copyLoaderTimer); copyLoaderTimer = null; }
       copiedChart = null;
       updateClipboardUI();
       resizeUI();
     }
 
     function updateClipboardUI() {
+      // While the copy loader runs the box must stay in its loading state —
+      // a selection update arriving meanwhile would otherwise cut it short.
+      if (copyLoaderTimer) return;
       var box = document.getElementById('clipboardBox');
+      box.classList.remove('loading');
+      document.getElementById('copyBtn').disabled = false;
+      document.getElementById('pasteBtn').disabled = false;
       if (copiedChart) {
         var n = copiedChart.linesCount || (copiedChart.allSeries ? copiedChart.allSeries.length : 0);
         var style = copiedChart.lineStyle || 'smooth';
@@ -560,6 +1157,7 @@
       setLineStyle(d.lineStyle || 'smooth');
       document.getElementById('topEventCheck').checked = !!d.topEvent;
       document.getElementById('bottomEventCheck').checked = !!d.bottomEvent;
+      populateLineColors(d);
 
       replaceMode = true;
       setInsertEnabled(true);
@@ -621,6 +1219,8 @@
         showLegend: showLegend,
         legendLabels: legendLabels,
         legendAlign: getLegendAlign(),
+        lineColors: currentLineColors(),
+        customColors: document.getElementById('customColorsCheck').checked,
         topEvent: topEvent,
         bottomEvent: bottomEvent,
         replace: replaceMode
@@ -635,7 +1235,31 @@
 
     window.onmessage = function(event) {
       var msg = event.data.pluginMessage;
+      if (msg && msg.type === 'palette') {
+        paletteHex = (msg.colors || []).map(normalizeHex).filter(function (h) { return h !== null; });
+        paletteDisplay = sortPaletteByHue(paletteHex);
+        renderLineColors();
+        return;
+      }
+      if (msg && msg.type === 'recolor-failed') {
+        recolorError = msg.message || 'Could not apply the color';
+        updateLineColorsHint();
+        return;
+      }
+      if (msg && msg.type === 'suggested-colors') {
+        applySuggestedColors(msg);
+        return;
+      }
       if (!msg || msg.type !== 'selection') return;
+      recolorError = '';
+
+      if (msg.reason === 'recolor' && msg.hasChart && msg.chartData) {
+        // Our own live recolor: keep the form and its buttons exactly as they are.
+        storedChartData = msg.chartData;
+        autoColorPreview = (msg.chartData.colors || []).map(rgbToHex);
+        renderLineColors();
+        return;
+      }
 
       var bar = document.getElementById('targetBar');
       var name = document.getElementById('targetName');
@@ -661,6 +1285,9 @@
           populateFromChartData(msg.chartData);
           pendingPasteData = null;
         } else {
+          // Auto rows preview the colors the selected chart has right now.
+          autoColorPreview = (msg.chartData.colors || []).map(rgbToHex);
+          renderLineColors();
           setRegenEnabled(true);
           setInsertEnabled(false);
         }
@@ -672,6 +1299,7 @@
         setInsertEnabled(true);
       }
 
+      updateLineColorsHint();
       updateClipboardUI();
       resizeUI();
     };
@@ -682,6 +1310,7 @@
     }
 
     resizeUI();
+    parent.postMessage({ pluginMessage: { type: 'get-palette' } }, '*');
     new MutationObserver(resizeUI).observe(document.body, { childList: true, subtree: true, attributes: true });
   </script>
 </body>
